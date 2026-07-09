@@ -50,7 +50,25 @@ Layered JSON config — project overrides global:
 
 Keys: `model` (default: auto-pick best installed coder model), `temperature`,
 `num_ctx`, `ollama_host`, `think` (`auto`/`on`/`off` — reasoning for thinking
-models like qwen3; `off` gives much faster replies), `permission_mode`.
+models like qwen3; `off` gives much faster replies), `permission_mode`
+(`ask`/`auto`/`deny` — controls whether `run_command` prompts before running
+safe-looking shell commands; destructive ones always prompt regardless).
+
+## Agent tools
+
+Inside chat, Tessa can call tools against your project (needs a model that
+supports Ollama tool calling — qwen3.5, qwen2.5, llama3.1+ all work):
+
+| Tool | Risk | Behavior |
+|---|---|---|
+| `read_file`, `list_dir`, `search_code` | safe | runs immediately |
+| `git_status`, `git_diff`, `git_add` | safe | runs immediately |
+| `write_file`, `delete_file` | confirm | shows a diff, asks y/n, keeps a backup in `.tessa/backups/` |
+| `git_commit`, `git_push` | confirm | shows the message/target, asks y/n |
+| `run_command` | policy | safe-looking commands follow `permission_mode`; commands matching a destructive pattern (`rm -rf`, `git push --force`, `sudo`, piping curl into a shell, ...) always ask |
+
+All file paths are resolved relative to the project root and refused if
+they try to escape it (`..`, absolute paths outside the project).
 
 ## Architecture
 
@@ -67,11 +85,9 @@ src/tessa/
 ## Roadmap
 
 - [x] **M1** — packaged CLI, streaming chat, config, project analysis
-- [ ] **M2** — code indexing and retrieval (embeddings via Ollama)
-- [ ] **M3** — agent loop with tool calling and safe file editing
-- [ ] **M4** — command execution with a permission system
-- [ ] **M5** — git workflows: diff review, commit generation, push
-- [ ] **M6** — persistent project memory
+- [x] **M3** — agent loop with tool calling, safe file editing (diff + confirm), command execution with a permission system, git workflows (status/diff/add/commit/push)
+- [ ] **M2** — code indexing and retrieval (embeddings via Ollama) — for repos too large for full-file context
+- [ ] **M6** — persistent project memory (remembered facts across sessions, not just history)
 - [ ] **M7** — plugins
 
 ## Development

@@ -8,8 +8,10 @@ from prompt_toolkit import PromptSession
 from prompt_toolkit.history import FileHistory
 from prompt_toolkit.styles import Style
 
+from tessa.agent.loop import run_agent_turn
 from tessa.agent.memory import SessionHistory
 from tessa.agent.prompts import build_system_prompt
+from tessa.agent.tools import ToolContext, build_registry
 from tessa.cli import ui
 from tessa.config.settings import GLOBAL_DIR, TessaConfig, find_project_root
 from tessa.context.scanner import ProjectSummary, scan_project
@@ -38,9 +40,11 @@ class ChatSession:
         self.config = config
         self.client = client
         self.model = model
+        self.root = project_root or Path.cwd()
         self.system_prompt = build_system_prompt(summary)
         self.messages: list[Message] = []
         self.history = SessionHistory(project_root)
+        self.registry = build_registry()
 
     def reset(self) -> None:
         self.messages.clear()
@@ -49,28 +53,29 @@ class ChatSession:
         user_message = Message(role="user", content=user_text)
         self.messages.append(user_message)
         self.history.append(user_message)
-        request = [Message(role="system", content=self.system_prompt), *self.messages]
+        ctx = ToolContext(root=self.root, config=self.config, confirm=ui.confirm)
         try:
-            reply, stats = ui.stream_response(
-                self.client.chat_stream(
-                    model=self.model,
-                    messages=request,
-                    temperature=self.config.temperature,
-                    num_ctx=self.config.num_ctx,
-                    think=self.config.think_flag,
-                )
+            reply, stats = run_agent_turn(
+                client=self.client,
+                model=self.model,
+                temperature=self.config.temperature,
+                num_ctx=self.config.num_ctx,
+                think=self.config.think_flag,
+                system_prompt=self.system_prompt,
+                messages=self.messages,
+                registry=self.registry,
+                ctx=ctx,
+                stream_fn=ui.stream_agent_response,
+                on_tool_call=ui.print_tool_call,
+                on_tool_result=ui.print_tool_result,
             )
         except KeyboardInterrupt:
-            self.messages.pop()  # don't keep a question the model never answered
             ui.console.print("\n[dim]interrupted[/dim]")
             return
         except OllamaError as exc:
-            self.messages.pop()
             ui.print_error(str(exc))
             return
-        assistant_message = Message(role="assistant", content=reply)
-        self.messages.append(assistant_message)
-        self.history.append(assistant_message)
+        self.history.append(Message(role="assistant", content=reply))
         line = ui.format_stats(stats)
         if line:
             ui.console.print(f"[dim]{line}[/dim]")

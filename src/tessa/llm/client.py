@@ -17,7 +17,7 @@ from collections.abc import Iterator
 
 import httpx
 
-from tessa.llm.types import ChatChunk, Message, ModelInfo
+from tessa.llm.types import ChatChunk, Message, ModelInfo, ToolCall
 
 logger = logging.getLogger(__name__)
 
@@ -88,15 +88,20 @@ class OllamaClient:
         temperature: float = 0.7,
         num_ctx: int = 8192,
         think: bool | None = None,
+        tools: list[dict] | None = None,
     ) -> Iterator[ChatChunk]:
         """Stream a chat completion as it is generated.
 
         Yields ChatChunk objects; the final chunk has done=True and carries
-        generation stats (token counts, duration).
+        generation stats (token counts, duration). A model that decides to
+        call a tool sends the whole call in one non-final chunk rather than
+        streaming it token by token.
 
         *think*: force reasoning on/off for thinking-capable models.
         None leaves the model's default behaviour untouched (safe for
         models that don't support the parameter at all).
+        *tools*: JSON-schema tool definitions (Ollama/OpenAI function-calling
+        format) to offer the model this turn.
         """
         payload: dict = {
             "model": model,
@@ -106,6 +111,8 @@ class OllamaClient:
         }
         if think is not None:
             payload["think"] = think
+        if tools:
+            payload["tools"] = tools
         try:
             with self._client.stream("POST", "/api/chat", json=payload) as response:
                 if response.status_code != 200:
@@ -134,6 +141,13 @@ class OllamaClient:
         if "error" in data:
             raise OllamaError(data["error"])
         message = data.get("message", {})
+        tool_calls = [
+            ToolCall(
+                name=tc.get("function", {}).get("name", ""),
+                arguments=tc.get("function", {}).get("arguments", {}) or {},
+            )
+            for tc in message.get("tool_calls") or []
+        ]
         if data.get("done"):
             stats = {
                 k: data[k]
@@ -143,10 +157,15 @@ class OllamaClient:
             return ChatChunk(
                 content=message.get("content", ""),
                 thinking=message.get("thinking", ""),
+                tool_calls=tool_calls,
                 done=True,
                 stats=stats,
             )
-        return ChatChunk(content=message.get("content", ""), thinking=message.get("thinking", ""))
+        return ChatChunk(
+            content=message.get("content", ""),
+            thinking=message.get("thinking", ""),
+            tool_calls=tool_calls,
+        )
 
     def close(self) -> None:
         self._client.close()
