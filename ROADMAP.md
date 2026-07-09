@@ -79,9 +79,21 @@ tool? a new slash command? both?) before writing code.
   `tests/utils.py`) would silently collide. Backups now live at
   `.tessa/backups/{stamp}/{original/relative/path}`, mirroring the
   project tree, so restoring is unambiguous.
-- **More CLI-level tests.** `tests/test_cli_memory.py` covers `tessa memory
-  *` via Typer's `CliRunner`; the same pattern isn't applied yet to `tessa
-  analyze`, `tessa config set`, `tessa init`, etc.
+- ~~**More CLI-level tests.**~~ Done: `tests/test_cli_commands.py` covers
+  `analyze`, `init`, `config show/set`, `restore list/apply`, and
+  `--version` via `CliRunner` (121 tests total). `ask`/`models`/the chat
+  REPL are deliberately not covered this way since they need a live
+  Ollama daemon — see "Testing against the real Ollama daemon" in
+  `CLAUDE.md` for how those get verified instead.
+- **Cross-platform.** Checked (not run): grepped the source for hardcoded
+  macOS paths, unix-only path joins, and `os.name`/`sys.platform`
+  branches — none found; everything routes through `pathlib`. The one
+  real, unavoidable limitation: `tools/terminal.py::run_command` uses
+  `subprocess.run(..., shell=True)`, which invokes `cmd.exe` on Windows,
+  not bash — so unix-style commands a model generates (`ls`, `grep`,
+  `rm -rf`) won't translate as-is. This has never actually been run on
+  Windows or Linux; "checked via static analysis" is not the same claim
+  as "tested," and the distinction matters if you're about to rely on it.
 - **Undo command.** Writes/deletes already back up to `.tessa/backups/`
   before touching a file, but there's no `tessa restore` to pull one back —
   right now that's a manual `cp`.
