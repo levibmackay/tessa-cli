@@ -83,7 +83,7 @@ streaming output, and `on_tool_call` / `on_tool_result` hooks for the
 console. This is what makes it testable with a fake client
 (`tests/test_agent_loop.py::FakeClient`) instead of hitting Ollama.
 
-### The two message-shape gotchas in the Ollama integration
+### The Ollama integration gotchas
 
 - Ollama's *thinking* models (qwen3.5, deepseek-r1, ...) stream reasoning in
   a separate `message.thinking` field, not `message.content`. If you only
@@ -94,6 +94,11 @@ console. This is what makes it testable with a fake client
   in a single chunk, even when `stream: true` — they are never token-by-token
   streamed. See `llm/types.py::ToolCall` and the parsing in
   `llm/client.py::OllamaClient._parse_chunk`.
+- Ollama unloads a model from memory 5 minutes after its last request by
+  default, and reloading costs several seconds — noticeable as a stall on
+  the first message of a new session. `config.keep_alive` (default `30m`)
+  is passed on every `chat_stream` call specifically to avoid this; don't
+  drop it when adding a new call site.
 
 ### Path safety
 

@@ -77,6 +77,24 @@ def test_thinking_chunks_are_separated_from_content() -> None:
     assert "".join(c.content for c in chunks) == "Answer."
 
 
+def test_keep_alive_included_when_set() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content)
+        assert payload["keep_alive"] == "30m"
+        return httpx.Response(200, content=ndjson({"message": {"content": "ok"}, "done": True}))
+
+    list(make_client(handler).chat_stream("m", [Message("user", "hi")], keep_alive="30m"))
+
+
+def test_keep_alive_omitted_when_none() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content)
+        assert "keep_alive" not in payload
+        return httpx.Response(200, content=ndjson({"message": {"content": "ok"}, "done": True}))
+
+    list(make_client(handler).chat_stream("m", [Message("user", "hi")]))
+
+
 def test_malformed_stream_lines_are_skipped() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         body = b'{"message": {"content": "ok"}, "done": false}\ngarbage\n' + ndjson(

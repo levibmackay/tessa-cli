@@ -89,6 +89,7 @@ class OllamaClient:
         num_ctx: int = 8192,
         think: bool | None = None,
         tools: list[dict] | None = None,
+        keep_alive: str | None = None,
     ) -> Iterator[ChatChunk]:
         """Stream a chat completion as it is generated.
 
@@ -102,6 +103,9 @@ class OllamaClient:
         models that don't support the parameter at all).
         *tools*: JSON-schema tool definitions (Ollama/OpenAI function-calling
         format) to offer the model this turn.
+        *keep_alive*: how long Ollama keeps this model loaded after the
+        request (e.g. "30m"); avoids a multi-second reload on the next
+        message. None leaves Ollama's own default (5 minutes) in place.
         """
         payload: dict = {
             "model": model,
@@ -111,6 +115,8 @@ class OllamaClient:
         }
         if think is not None:
             payload["think"] = think
+        if keep_alive is not None:
+            payload["keep_alive"] = keep_alive
         if tools:
             payload["tools"] = tools
         try:

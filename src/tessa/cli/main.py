@@ -87,6 +87,7 @@ def ask(
                     temperature=config.temperature,
                     num_ctx=config.num_ctx,
                     think=config.think_flag,
+                    keep_alive=config.keep_alive,
                 )
             )
         except OllamaError as exc:

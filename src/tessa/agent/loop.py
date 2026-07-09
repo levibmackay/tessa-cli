@@ -63,6 +63,7 @@ def run_agent_turn(
     temperature: float,
     num_ctx: int,
     think: bool | None,
+    keep_alive: str | None = None,
     system_prompt: str,
     messages: list[Message],
     registry: list[ToolSpec],
@@ -84,7 +85,7 @@ def run_agent_turn(
         request = [Message(role="system", content=system_prompt), *messages]
         result = stream_fn(client.chat_stream(
             model=model, messages=request, temperature=temperature,
-            num_ctx=num_ctx, think=think, tools=schemas,
+            num_ctx=num_ctx, think=think, tools=schemas, keep_alive=keep_alive,
         ))
         if not result.tool_calls:
             messages.append(Message(role="assistant", content=result.content))

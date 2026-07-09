@@ -72,6 +72,7 @@ class ChatSession:
                 temperature=self.config.temperature,
                 num_ctx=self.config.num_ctx,
                 think=self.config.think_flag,
+                keep_alive=self.config.keep_alive,
                 system_prompt=self.system_prompt,
                 messages=self.messages,
                 registry=self.registry,

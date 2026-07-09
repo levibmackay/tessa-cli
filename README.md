@@ -142,6 +142,32 @@ Layered JSON config — project overrides global:
 | `ollama_host` | `http://localhost:11434` | Where the Ollama daemon is listening |
 | `think` | `auto` | `auto`/`on`/`off` — reasoning for thinking models (Qwen3, DeepSeek-R1); `off` is much faster |
 | `permission_mode` | `ask` | `ask`/`auto`/`deny` — whether `run_command` prompts before running safe-looking shell commands (destructive ones always prompt) |
+| `keep_alive` | `30m` | How long Ollama keeps the model loaded after a request; avoids a multi-second reload on your next message. Ollama duration string, or `-1` to never unload |
+
+## Performance and model choice
+
+Local models are the whole point of Tessa, but they're not free-riding on a
+frontier hosted model's scale — a few things make a real difference on
+consumer hardware:
+
+- **Use a coding-specific model, not a generic chat model**, if your
+  hardware allows it. `qwen2.5-coder` / `qwen3.5-coder` / `deepseek-coder`
+  are trained specifically on code and noticeably outperform a generic
+  model of the same size on programming tasks. `llm/models.py` already
+  prefers these automatically if you have one installed — you just need to
+  `ollama pull` one.
+- **Match model size to your RAM.** As a rough guide on Apple Silicon: 16GB
+  comfortably handles up to ~7-9B models; going bigger risks swapping, which
+  is far slower than a smaller model outright. `qwen2.5-coder:7b` is a
+  solid default on a 16GB machine.
+- **`think: off`** if you're on a reasoning model (Qwen3, DeepSeek-R1) and
+  want speed over the model showing its work — reasoning tokens can easily
+  add 10-30s to a reply before the actual answer starts.
+- **`keep_alive`** (above) avoids paying Ollama's model-load cost
+  (multi-second) on every single message in a session.
+
+None of this closes the gap with a large hosted model — it narrows it as
+much as the "runs entirely on your machine" constraint allows.
 
 ## Agent tools and the safety model
 
