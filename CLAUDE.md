@@ -99,6 +99,19 @@ console. This is what makes it testable with a fake client
   the first message of a new session. `config.keep_alive` (default `30m`)
   is passed on every `chat_stream` call specifically to avoid this; don't
   drop it when adding a new call site.
+- Not every model that looks like it supports tool calling actually wires
+  it into Ollama's structured `message.tool_calls` field — some (e.g.
+  `qwen2.5-coder:7b`) write the call as plain JSON text inside
+  `message.content` instead, which `run_agent_turn` never parses, so the
+  model silently never uses any tool. Before recommending a model as a
+  default, verify empirically with a trivial curl call, not by assumption:
+  ```
+  curl -s http://localhost:11434/api/chat -d '{"model":"MODEL","stream":false,
+  "messages":[{"role":"user","content":"weather in Paris? use the tool"}],
+  "tools":[{"type":"function","function":{"name":"get_weather","description":"x",
+  "parameters":{"type":"object","properties":{"city":{"type":"string"}},"required":["city"]}}}]}'
+  ```
+  and check the response has a `tool_calls` field on `message`, not JSON text in `content`.
 
 ### Path safety
 

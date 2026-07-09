@@ -64,7 +64,7 @@ class ChatSession:
         user_message = Message(role="user", content=user_text)
         self.messages.append(user_message)
         self.history.append(user_message)
-        ctx = ToolContext(root=self.root, config=self.config, confirm=ui.confirm)
+        ctx = ToolContext(root=self.root, config=self.config, confirm=ui.confirm, client=self.client)
         try:
             reply, stats = run_agent_turn(
                 client=self.client,

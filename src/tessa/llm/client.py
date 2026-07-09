@@ -79,6 +79,25 @@ class OllamaClient:
     def has_model(self, name: str) -> bool:
         return any(m.name == name or m.name.split(":")[0] == name for m in self.list_models())
 
+    # -- embeddings ---------------------------------------------------------
+
+    def embed(self, model: str, inputs: list[str]) -> list[list[float]]:
+        """Return one embedding vector per input string, via /api/embed (batched)."""
+        if not inputs:
+            return []
+        try:
+            response = self._client.post("/api/embed", json={"model": model, "input": inputs})
+        except httpx.ConnectError as exc:
+            raise OllamaConnectionError(self.host) from exc
+        except httpx.HTTPError as exc:
+            raise OllamaError(f"Embedding request failed: {exc}") from exc
+        if response.status_code != 200:
+            raise OllamaError(_extract_error(response.text, response.status_code))
+        embeddings = response.json().get("embeddings")
+        if embeddings is None:
+            raise OllamaError("Ollama returned no embeddings.")
+        return embeddings
+
     # -- chat -------------------------------------------------------------
 
     def chat_stream(

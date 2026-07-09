@@ -21,6 +21,7 @@ from typing import Any, Callable, Literal
 
 from tessa.agent import facts
 from tessa.config.settings import TessaConfig
+from tessa.llm.client import OllamaClient
 from tessa.tools import filesystem, git
 from tessa.tools.terminal import classify_command, run_command
 
@@ -43,6 +44,7 @@ class ToolContext:
     root: Path
     config: TessaConfig
     confirm: Callable[[ConfirmRequest], bool]
+    client: OllamaClient | None = None  # reused for tools that need Ollama (e.g. search_semantic)
 
 
 @dataclass
@@ -108,6 +110,29 @@ def _list_dir(args: dict, ctx: ToolContext) -> ToolResult:
 def _search_code(args: dict, ctx: ToolContext) -> ToolResult:
     content = filesystem.search_code(ctx.root, args["pattern"], args.get("path", "."))
     return ToolResult(ok=True, content=_truncate(content), summary=f"searched for '{args['pattern']}'")
+
+
+def _search_semantic(args: dict, ctx: ToolContext) -> ToolResult:
+    from tessa.context import retriever
+
+    if not retriever.is_indexed(ctx.root):
+        return ToolResult(
+            ok=False,
+            content="No semantic index for this project yet. Tell the user to run "
+            "`tessa index` first, or use search_code for literal substring search instead.",
+            summary="not indexed",
+        )
+    if ctx.client is None:
+        return ToolResult(ok=False, content="No Ollama connection available for semantic search.", summary="error")
+
+    query = args["query"]
+    results = retriever.search(ctx.root, ctx.client, query, top_k=args.get("top_k", 8))
+    if not results:
+        return ToolResult(ok=True, content="No relevant chunks found.", summary="no matches")
+    body = "\n\n".join(
+        f"{r.path}:{r.start_line}-{r.end_line} (relevance {r.score:.2f})\n{r.text}" for r in results
+    )
+    return ToolResult(ok=True, content=_truncate(body), summary=f"semantic search: '{query}' ({len(results)} results)")
 
 
 def _write_file(args: dict, ctx: ToolContext) -> ToolResult:
@@ -252,6 +277,22 @@ def build_registry() -> list[ToolSpec]:
                 "required": ["pattern"],
             },
             "safe", _search_code,
+        ),
+        ToolSpec(
+            "search_semantic",
+            "Search the project by meaning rather than exact text, using an embedding index "
+            "(requires `tessa index` to have been run first). Best for 'where is X handled' "
+            "style questions when you don't know the exact wording to grep for. Use search_code "
+            "instead when you know the literal string.",
+            {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Natural-language description of what you're looking for"},
+                    "top_k": {"type": "integer", "description": "Number of results to return, default 8"},
+                },
+                "required": ["query"],
+            },
+            "safe", _search_semantic,
         ),
         ToolSpec(
             "write_file",

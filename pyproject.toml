@@ -24,6 +24,7 @@ dependencies = [
     "prompt-toolkit>=3.0",
     "httpx>=0.27",
     "pyfiglet>=1.0",
+    "numpy>=1.26",
 ]
 
 [project.optional-dependencies]

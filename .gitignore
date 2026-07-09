@@ -8,3 +8,4 @@ build/
 .coverage
 .tessa/history/
 .tessa/backups/
+.tessa/index.sqlite3

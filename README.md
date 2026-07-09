@@ -1,5 +1,7 @@
 # Tessa
 
+[![tests](https://github.com/levibmackay/tessa-cli/actions/workflows/test.yml/badge.svg)](https://github.com/levibmackay/tessa-cli/actions/workflows/test.yml)
+
 **A local AI coding agent for your terminal — no API keys, no subscriptions,
 no cloud.** Tessa reads your code, answers questions about it, edits files,
 runs commands, and drives git, all through a local [Ollama](https://ollama.com)
@@ -90,6 +92,7 @@ ln -s "$PWD/.venv/bin/tessa" /opt/homebrew/bin/tessa   # or anywhere on your PAT
 | `tessa ask "why is this failing?"` | One-shot question, no tools, good for scripts |
 | `tessa analyze` | Project summary: languages, size, key files |
 | `tessa models` | List installed Ollama models |
+| `tessa index` | Build/refresh the semantic search index (for `search_semantic`) |
 | `tessa init` | Create `.tessa/` project config |
 | `tessa config show` | Show effective (merged) configuration |
 | `tessa config set model qwen3.5:9b` | Set a config value (`--project` for per-repo) |
@@ -182,6 +185,7 @@ classified into a risk tier that decides whether it needs your approval:
 | `git_commit`, `git_push` | confirm | Shows the message/target, asks y/n |
 | `run_command` | policy | Safe-looking commands follow `permission_mode`; anything matching a destructive pattern always asks, regardless of mode |
 | `remember` | safe | Saves a fact to `.tessa/memory.json` so it's known in future sessions |
+| `search_semantic` | safe | Meaning-based search over an embedding index (`tessa index` first); falls back to literal `search_code` if not indexed |
 
 All file paths are resolved relative to the project root and refused if they
 try to escape it (`..`, absolute paths outside the project) — a confused or
@@ -234,11 +238,11 @@ repo in `tmp_path`. None of them require a running Ollama daemon.
 
 ## Roadmap
 
-Milestones 1 (core CLI), 3 (agent loop, tool calling, git workflows), and 6
-(persistent project memory) are done. See [`ROADMAP.md`](ROADMAP.md) for the
-detailed plan on what's next — retrieval/embeddings for large repos, and a
-backlog of smaller polish items (CI, an undo command, a non-interactive
-mode, packaging).
+Milestones 1 (core CLI), 2 (semantic retrieval), 3 (agent loop, tool
+calling, git workflows), and 6 (persistent project memory) are done. See
+[`ROADMAP.md`](ROADMAP.md) for what's left — mainly smaller polish items
+(an undo command, a non-interactive mode, packaging) and the M7 plugins
+stretch goal.
 
 ## License
 

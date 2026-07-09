@@ -27,46 +27,40 @@ context — each one names the files to touch and what "done" looks like.
   add/list/forget` outside of chat. Verified end-to-end: a fact added in one
   process is present in a fresh process's system prompt with no extra steps.
 
+- **CI.** `.github/workflows/test.yml` runs the full suite on Python
+  3.11-3.13 for every push/PR. Verified against a clean clone with no
+  pre-existing git identity — the git-tool tests set repo-local identity
+  themselves, so no CI-side git config is needed.
+- **M2 — Retrieval for large repos.** `context/indexer.py` chunks source
+  files into language-agnostic ~60-line windows (snapped to the nearest
+  blank line within a short lookahead, so boundaries usually land between
+  functions) and embeds each one via Ollama (`nomic-embed-text`, 768-dim).
+  `database/sqlite.py` stores chunks + embeddings as float32 blobs in
+  `.tessa/index.sqlite3`. Re-indexing is incremental — a file is only
+  re-embedded if its content hash changed since the last index. New safe
+  tool `search_semantic` in `agent/tools.py`, offered alongside literal
+  `search_code`; it reports "not indexed yet" cleanly if `tessa index`
+  hasn't been run. Verified end-to-end: indexed a real project, confirmed
+  incremental re-runs skip unchanged files and pick up changed/deleted
+  ones, and confirmed the real agent loop (not just the retriever in
+  isolation) chooses `search_semantic` correctly and gives the right
+  answer against a live Ollama daemon, 3/3 runs.
+
+**Model gotcha found while shipping M2:** not every model that emits
+reasonable-looking tool-call JSON actually wires it into Ollama's
+structured `tool_calls` field — `qwen2.5-coder:7b` writes the call as
+plain text in `message.content` instead, which `run_agent_turn` never
+parses, so it silently never uses *any* tool. Confirmed via a direct
+`/api/chat` call with a trivial tool before trusting it as a default.
+Verify tool-calling support empirically (a simple curl test, not vibes)
+before recommending a new default model — see `CLAUDE.md` for the check.
+
 M3 was done before M2 on purpose: it was the part that turns Tessa into an
 *agent* rather than a chatbot, and every repo tested against so far fits
 comfortably in a model's context window, so retrieval wasn't yet the
-bottleneck. Revisit that ordering call if you start using Tessa on a large
-repo and full-file reads start blowing the context budget.
+bottleneck as of M3. M2 removes that ceiling for larger repos.
 
 ## Next up
-
-### M2 — Retrieval for large repos
-
-**Problem it solves:** `context/scanner.py` gives Tessa a project *summary*,
-but the agent still reads whole files via the `read_file` tool. That's fine
-up to a few thousand lines; it breaks down on a large monorepo where the
-right file isn't obvious and reading candidates one by one burns the context
-window.
-
-**Approach:**
-1. `context/indexer.py` — chunk source files (function/class-sized, not
-   fixed-size — a naive line-count chunker will split mid-function) and
-   embed each chunk with Ollama's embeddings API (`nomic-embed-text` is
-   small and good for code; not currently pulled, would need `ollama pull
-   nomic-embed-text`). Store vectors + chunk metadata (file, line range) in
-   SQLite (`database/sqlite.py`, per the original architecture sketch) —
-   no need for FAISS/Chroma at the repo sizes Tessa targets; a plain
-   `sqlite-vec` or brute-force cosine scan over a few thousand rows is fast
-   enough and keeps the "no extra services" philosophy intact.
-2. `context/retriever.py` — given a query, embed it and return the top-k
-   chunks by cosine similarity.
-3. Add a new safe tool, `search_semantic` (alongside the existing literal
-   `search_code`), in `agent/tools.py`, so the model can choose between
-   exact substring search and meaning-based search.
-4. Incremental indexing: hash each file's content; only re-embed files whose
-   hash changed since the last `tessa index` (new CLI command) or since the
-   index was auto-built at `tessa` startup for small repos.
-5. Decide the trigger: auto-index silently for small repos (< some file
-   count threshold) on every `tessa` launch, but require an explicit `tessa
-   index` for large ones so startup doesn't get slow.
-
-**Done when:** a query about a feature in a 5,000+ file repo finds the
-right file without the model needing to `list_dir` its way there manually.
 
 ### M7 — Plugins (stretch)
 
@@ -78,9 +72,6 @@ tool? a new slash command? both?) before writing code.
 
 ## Smaller polish items (no milestone, pick up anytime)
 
-- **CI.** No GitHub Actions workflow yet. Add `.github/workflows/test.yml`
-  running `pytest` on push/PR — the test suite has zero external
-  dependencies (Ollama calls are all mocked), so this is a quick win.
 - **More CLI-level tests.** `tests/test_cli_memory.py` covers `tessa memory
   *` via Typer's `CliRunner`; the same pattern isn't applied yet to `tessa
   analyze`, `tessa config set`, `tessa init`, etc.

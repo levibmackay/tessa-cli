@@ -93,6 +93,31 @@ def test_run_command_ask_mode_confirms_even_safe_commands(tmp_path: Path) -> Non
     assert len(asked) == 1
 
 
+def test_search_semantic_reports_not_indexed(tmp_path: Path) -> None:
+    result = get("search_semantic").handler({"query": "auth logic"}, ctx(tmp_path))
+    assert not result.ok
+    assert "tessa index" in result.content
+
+
+def test_search_semantic_returns_results_when_indexed(tmp_path: Path) -> None:
+    from tessa.context.indexer import Chunk
+    from tessa.database import sqlite as db
+
+    conn = db.connect(tmp_path)
+    db.insert_chunks(conn, [Chunk(path="auth.py", start_line=1, end_line=5, text="def login(): ...", content_hash="h")], [[1.0, 0.0]])
+    conn.commit()
+    conn.close()
+
+    class FakeClient:
+        def embed(self, model: str, inputs: list[str]) -> list[list[float]]:
+            return [[1.0, 0.0] for _ in inputs]
+
+    context = ToolContext(root=tmp_path, config=TessaConfig(), confirm=lambda req: True, client=FakeClient())
+    result = get("search_semantic").handler({"query": "login handling"}, context)
+    assert result.ok
+    assert "auth.py" in result.content
+
+
 def test_remember_tool_is_safe_and_persists(tmp_path: Path) -> None:
     from tessa.agent.facts import load_facts
 

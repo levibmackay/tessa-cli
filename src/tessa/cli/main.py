@@ -3,6 +3,7 @@
     tessa                      interactive chat (default)
     tessa ask "question"       one-shot question, prints the answer
     tessa analyze              summarize the current project
+    tessa index                build/refresh the semantic search index
     tessa models               list installed Ollama models
     tessa init                 create .tessa/ in the current project
     tessa config show          print effective configuration
@@ -31,6 +32,7 @@ from tessa.config.settings import (
     project_config_path,
     save_config_value,
 )
+from tessa.context.indexer import EMBED_MODEL, build_index
 from tessa.context.scanner import scan_project
 from tessa.llm.client import OllamaClient, OllamaError
 from tessa.llm.types import Message
@@ -124,6 +126,32 @@ def analyze(
     ui.console.print(table)
 
 
+@app.command(name="index")
+def build_semantic_index(
+    path: Path = typer.Argument(Path("."), help="Project directory to index."),
+    force: bool = typer.Option(False, "--force", "-f", help="Re-embed every file, ignoring the incremental cache."),
+) -> None:
+    """Build or refresh the semantic search index (used by the search_semantic tool)."""
+    if not path.is_dir():
+        ui.print_error(f"Not a directory: {path}")
+        raise typer.Exit(1)
+    root = path.resolve()
+    config = load_config(project_root=root)
+    with OllamaClient(host=config.ollama_host) as client:
+        if not client.is_alive():
+            ui.print_error(f"Cannot reach Ollama at {config.ollama_host}.")
+            raise typer.Exit(1)
+        if not client.has_model(EMBED_MODEL):
+            ui.print_error(f"Embedding model not installed. Run `ollama pull {EMBED_MODEL}` first.")
+            raise typer.Exit(1)
+        with ui.console.status("Indexing..."):
+            stats = build_index(root, client, force=force)
+    ui.print_info(
+        f"Scanned {stats.files_scanned} file(s); embedded {stats.files_indexed} changed file(s) "
+        f"({stats.chunks_indexed} chunks); removed {stats.files_removed} deleted file(s) from the index."
+    )
+
+
 @app.command()
 def models() -> None:
     """List models installed in Ollama."""
@@ -156,8 +184,8 @@ def init() -> None:
     config_file.parent.mkdir(parents=True, exist_ok=True)
     config_file.write_text(json.dumps({}, indent=2) + "\n", encoding="utf-8")
     gitignore = config_file.parent / ".gitignore"
-    gitignore.write_text("history/\nbackups/\n", encoding="utf-8")
-    ui.print_info(f"Initialized {config_file.parent}/ (history/ and backups/ are git-ignored)")
+    gitignore.write_text("history/\nbackups/\nindex.sqlite3\n", encoding="utf-8")
+    ui.print_info(f"Initialized {config_file.parent}/ (history/, backups/, and index.sqlite3 are git-ignored)")
 
 
 @config_app.command("show")
