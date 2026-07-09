@@ -9,7 +9,7 @@ import numpy as np
 
 from tessa.context.indexer import EMBED_MODEL
 from tessa.database import sqlite as db
-from tessa.llm.client import OllamaClient
+from tessa.llm.protocol import ModelClient
 
 
 @dataclass
@@ -31,7 +31,7 @@ def is_indexed(project_root: Path) -> bool:
         conn.close()
 
 
-def search(project_root: Path, client: OllamaClient, query: str, top_k: int = 8) -> list[SearchResult]:
+def search(project_root: Path, client: ModelClient, query: str, top_k: int = 8) -> list[SearchResult]:
     conn = db.connect(project_root)
     try:
         chunks = db.all_chunks(conn)

@@ -16,8 +16,10 @@ from tessa.agent.tools import ToolContext, build_registry
 from tessa.cli import ui
 from tessa.config.settings import GLOBAL_DIR, TessaConfig, find_project_root
 from tessa.context.scanner import ProjectSummary, scan_project
-from tessa.llm.client import OllamaClient, OllamaError
+from tessa.llm.client import OllamaError
+from tessa.llm.factory import build_client
 from tessa.llm.models import pick_default_model
+from tessa.llm.protocol import ModelClient
 from tessa.llm.types import Message
 
 HELP_TEXT = """\
@@ -39,7 +41,7 @@ PROMPT_STYLE = Style.from_dict({"prompt": "ansimagenta bold"})
 class ChatSession:
     """Holds the state of one interactive session."""
 
-    def __init__(self, config: TessaConfig, client: OllamaClient, model: str,
+    def __init__(self, config: TessaConfig, client: ModelClient, model: str,
                  summary: ProjectSummary | None, project_root: Path | None) -> None:
         self.config = config
         self.client = client
@@ -95,7 +97,7 @@ class ChatSession:
         ui.console.print()
 
 
-def resolve_model(client: OllamaClient, config: TessaConfig) -> str:
+def resolve_model(client: ModelClient, config: TessaConfig) -> str:
     """Use the configured model if installed, otherwise auto-pick."""
     models = client.list_models()
     if not models:
@@ -108,12 +110,15 @@ def resolve_model(client: OllamaClient, config: TessaConfig) -> str:
 
 
 def run_chat(config: TessaConfig) -> int:
-    client = OllamaClient(host=config.ollama_host)
+    client = build_client(config)
     if not client.is_alive():
-        ui.print_error(
-            f"Cannot reach Ollama at {config.ollama_host}.\n"
-            "  Start it with `ollama serve` or by opening the Ollama app."
-        )
+        if config.server_url:
+            ui.print_error(f"Cannot reach the Tessa Server at {config.server_url}.")
+        else:
+            ui.print_error(
+                f"Cannot reach Ollama at {config.ollama_host}.\n"
+                "  Start it with `ollama serve` or by opening the Ollama app."
+            )
         return 1
 
     try:

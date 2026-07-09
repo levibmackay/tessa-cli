@@ -19,7 +19,8 @@ from pathlib import Path
 
 from tessa.context.scanner import IGNORED_DIRS, LANGUAGE_BY_EXTENSION
 from tessa.database import sqlite as db
-from tessa.llm.client import OllamaClient, OllamaError
+from tessa.llm.client import OllamaError
+from tessa.llm.protocol import ModelClient
 
 logger = logging.getLogger(__name__)
 
@@ -93,7 +94,7 @@ class IndexStats:
     chunks_indexed: int = 0
 
 
-def build_index(project_root: Path, client: OllamaClient, force: bool = False) -> IndexStats:
+def build_index(project_root: Path, client: ModelClient, force: bool = False) -> IndexStats:
     """Incrementally (re)build the semantic index for a project."""
     stats = IndexStats()
     conn = db.connect(project_root)
@@ -140,7 +141,7 @@ def build_index(project_root: Path, client: OllamaClient, force: bool = False) -
     return stats
 
 
-def _embed_all(client: OllamaClient, texts: list[str]) -> list[list[float]]:
+def _embed_all(client: ModelClient, texts: list[str]) -> list[list[float]]:
     vectors: list[list[float]] = []
     for i in range(0, len(texts), EMBED_BATCH_SIZE):
         batch = texts[i : i + EMBED_BATCH_SIZE]

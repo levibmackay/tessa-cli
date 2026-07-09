@@ -21,7 +21,7 @@ from typing import Any, Callable, Literal
 
 from tessa.agent import facts
 from tessa.config.settings import TessaConfig
-from tessa.llm.client import OllamaClient
+from tessa.llm.protocol import ModelClient
 from tessa.tools import filesystem, git
 from tessa.tools.terminal import classify_command, run_command
 
@@ -44,7 +44,7 @@ class ToolContext:
     root: Path
     config: TessaConfig
     confirm: Callable[[ConfirmRequest], bool]
-    client: OllamaClient | None = None  # reused for tools that need Ollama (e.g. search_semantic)
+    client: ModelClient | None = None  # reused for tools that need model access (e.g. search_semantic)
 
 
 @dataclass

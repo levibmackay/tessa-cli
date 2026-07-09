@@ -40,6 +40,11 @@ class TessaConfig:
     # session doesn't pay the multi-second reload cost on every message.
     # Ollama duration string ("30m", "1h") or "-1" to never unload.
     keep_alive: str = "30m"
+    # If set, talk to a remote Tessa Server at this URL instead of a local
+    # Ollama daemon (see llm/factory.py::build_client). None = local-only,
+    # today's behavior, unchanged.
+    server_url: str | None = None
+    api_key: str | None = None  # bearer token for server_url, if set
 
     @property
     def think_flag(self) -> bool | None:

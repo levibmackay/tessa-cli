@@ -148,6 +148,8 @@ Layered JSON config — project overrides global:
 | `think` | `auto` | `auto`/`on`/`off` — reasoning for thinking models (Qwen3, DeepSeek-R1); `off` is much faster |
 | `permission_mode` | `ask` | `ask`/`auto`/`deny` — whether `run_command` prompts before running safe-looking shell commands (destructive ones always prompt) |
 | `keep_alive` | `30m` | How long Ollama keeps the model loaded after a request; avoids a multi-second reload on your next message. Ollama duration string, or `-1` to never unload |
+| `server_url` | not set | If set, talk to a remote Tessa Server instead of a local Ollama daemon — see [Running Tessa Server](#running-tessa-server-remote-gpu-inference) |
+| `api_key` | not set | Bearer token for `server_url` |
 
 ## Performance and model choice
 
@@ -173,6 +175,30 @@ consumer hardware:
 
 None of this closes the gap with a large hosted model — it narrows it as
 much as the "runs entirely on your machine" constraint allows.
+
+## Running Tessa Server (remote/GPU inference)
+
+If you have a second machine with more RAM or a real GPU — a gaming PC,
+say — you can run inference there instead and keep using `tessa` normally
+from a laptop. **Tool execution (file edits, git, shell commands) always
+stays on whichever machine runs the CLI** — only chat/tool-call inference
+and embeddings go over the network. This means `tessa "fix this bug"`
+works exactly the same, from any directory, whether it's talking to a
+local Ollama or a remote one.
+
+```bash
+# On the server machine (needs Ollama already running):
+pip install -e . -e server/            # from the repo root, one shared venv
+TESSA_SERVER_TOKEN=<a-long-random-token> tessa-server
+
+# On the client machine:
+tessa config set server_url https://<server-host>:<port>
+tessa config set api_key <the-same-token>
+tessa                                   # works exactly as before
+```
+
+Full server configuration (env vars), API design, and the reasoning behind
+the client/server split live in [`server/README.md`](server/README.md).
 
 ## Agent tools and the safety model
 
@@ -211,14 +237,27 @@ Tessa keeps two different kinds of history, deliberately separate:
 ## Architecture
 
 ```
-src/tessa/
-├── cli/       Typer commands, the chat REPL, Rich rendering
-├── agent/     system prompt, tool registry, the plan→call→observe→respond loop
-├── tools/     pure functions: filesystem, terminal, git — no UI/agent knowledge
-├── llm/       Ollama HTTP client: streaming chat, tool calling, model listing
-├── context/   repository scanner (languages, manifests, largest files)
-└── config/    layered JSON settings
+tessa-cli/
+├── src/tessa/
+│   ├── cli/       Typer commands, the chat REPL, Rich rendering
+│   ├── agent/     system prompt, tool registry, the plan→call→observe→respond loop
+│   ├── tools/     pure functions: filesystem, terminal, git — no UI/agent knowledge
+│   ├── llm/       ModelClient protocol + two implementations: OllamaClient
+│   │               (local daemon) and RemoteClient (a Tessa Server)
+│   ├── context/   repository scanner + semantic search index
+│   ├── database/  SQLite storage for the semantic index
+│   └── config/    layered JSON settings
+│
+└── server/        optional: FastAPI inference proxy for a remote/GPU
+                    Ollama — see "Running Tessa Server" above. Tool
+                    execution never happens here; only inference does.
 ```
+
+`agent/`, `tools/`, `context/` etc. type-hint against `llm.protocol.ModelClient`,
+not a concrete client class — this is what lets `tessa` talk to either a
+local Ollama daemon or a remote Tessa Server with zero code changes
+anywhere except `llm/factory.py::build_client`, which picks based on
+whether `server_url` is configured.
 
 See `CLAUDE.md` for the layering rules and the non-obvious integration
 details (how thinking-model output and tool calls are actually shaped in
@@ -229,22 +268,27 @@ useful for a human too.
 ## Development
 
 ```bash
-.venv/bin/pytest                                    # full suite (59 tests, no Ollama required)
+.venv/bin/pytest                                    # CLI suite (140 tests, no Ollama required)
 .venv/bin/pytest tests/test_agent_loop.py            # one file
 .venv/bin/pytest tests/test_agent_loop.py::test_tool_call_then_final_answer  # one test
+
+cd server && ../.venv/bin/pytest                    # server suite (14 tests, no Ollama required)
 ```
 
 All tests are hermetic — the LLM client is tested against
 `httpx.MockTransport`, git/filesystem tools run against a real throwaway
-repo in `tmp_path`. None of them require a running Ollama daemon.
+repo in `tmp_path`, the server is tested against a fake `ModelClient`
+double. None of them require a running Ollama daemon.
 
 ## Roadmap
 
 Milestones 1 (core CLI), 2 (semantic retrieval), 3 (agent loop, tool
-calling, git workflows), and 6 (persistent project memory) are done. See
-[`ROADMAP.md`](ROADMAP.md) for what's left — mainly smaller polish items
-(an undo command, a non-interactive mode, packaging) and the M7 plugins
-stretch goal.
+calling, git workflows), 6 (persistent project memory), and the
+client/server split (`server/`, remote inference over Tailscale) are done.
+See [`ROADMAP.md`](ROADMAP.md) for what's left — packaging, and the M7
+plugins stretch goal, plus deferred server work (real multi-user token
+storage, a task queue, non-Ollama providers) that the current design
+doesn't block but doesn't need yet either.
 
 ## License
 

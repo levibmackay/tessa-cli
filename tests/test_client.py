@@ -5,8 +5,8 @@ import json
 import httpx
 import pytest
 
-from tessa.llm.client import OllamaClient, OllamaError
-from tessa.llm.types import Message
+from tessa.llm.client import OllamaClient, OllamaError, parse_chat_line, serialize_chat_chunk
+from tessa.llm.types import ChatChunk, Message, ToolCall
 
 
 def make_client(handler) -> OllamaClient:
@@ -93,6 +93,33 @@ def test_keep_alive_omitted_when_none() -> None:
         return httpx.Response(200, content=ndjson({"message": {"content": "ok"}, "done": True}))
 
     list(make_client(handler).chat_stream("m", [Message("user", "hi")]))
+
+
+def test_serialize_chat_chunk_round_trips_through_parse_chat_line() -> None:
+    """serialize_chat_chunk (server-side) and parse_chat_line (client-side)
+    must agree on the wire shape — used by RemoteClient against the real
+    Tessa Server, see server/tessa_server/api/v1.py."""
+    original = ChatChunk(
+        content="hi", thinking="pondering",
+        tool_calls=[ToolCall(name="read_file", arguments={"path": "a.py"})],
+        done=True, stats={"eval_count": 5, "total_duration": 100},
+    )
+    line = json.dumps(serialize_chat_chunk(original))
+    parsed = parse_chat_line(line)
+    assert parsed.content == original.content
+    assert parsed.thinking == original.thinking
+    assert parsed.done is True
+    assert parsed.stats == original.stats
+    assert len(parsed.tool_calls) == 1
+    assert parsed.tool_calls[0].name == "read_file"
+    assert parsed.tool_calls[0].arguments == {"path": "a.py"}
+
+
+def test_serialize_chat_chunk_intermediate_chunk_round_trip() -> None:
+    original = ChatChunk(content="partial", done=False)
+    parsed = parse_chat_line(json.dumps(serialize_chat_chunk(original)))
+    assert parsed.content == "partial"
+    assert parsed.done is False
 
 
 def test_malformed_stream_lines_are_skipped() -> None:

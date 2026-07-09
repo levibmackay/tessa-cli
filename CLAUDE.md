@@ -6,21 +6,31 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 Tessa is a local AI coding agent CLI — a personal, API-key-free alternative to
 Claude Code / Cursor, built on top of a local [Ollama](https://ollama.com)
-daemon. It is a portfolio project for Levi (CS student), so code quality,
-tests, and a clean architecture matter more than shipping speed.
+daemon, with an optional FastAPI server (`server/`) so Ollama can run on a
+more powerful remote machine instead. It is a portfolio project for Levi
+(CS student), so code quality, tests, and a clean architecture matter more
+than shipping speed.
+
+This is a **two-package monorepo**: `src/tessa` (the CLI, always needed)
+and `server/tessa_server` (optional, a separate installable package that
+depends on `tessa` as a library). Both are typically installed into one
+shared venv for local dev.
 
 ## Commands
 
 ```bash
-# Install (editable) into the project venv — do this after adding a dependency
+# Install both packages (editable) into one shared venv
 .venv/bin/pip install -e ".[dev]"
+.venv/bin/pip install -e "server/[dev]"
 
-# Run the full test suite
+# Run the CLI package's test suite (140 tests)
 .venv/bin/pytest
+.venv/bin/pytest tests/test_agent_loop.py                                   # one file
+.venv/bin/pytest tests/test_agent_loop.py::test_tool_call_then_final_answer # one test
 
-# Run a single test file / test
-.venv/bin/pytest tests/test_agent_loop.py
-.venv/bin/pytest tests/test_agent_loop.py::test_tool_call_then_final_answer
+# Run the server package's test suite (14 tests) — has its own pyproject.toml,
+# so run it from server/, not the repo root
+cd server && ../.venv/bin/pytest
 
 # Run the CLI itself (after install -e, `tessa` is also on PATH via a symlink
 # into /opt/homebrew/bin)
@@ -28,6 +38,9 @@ tessa                      # interactive chat REPL in the current project
 tessa ask "question"       # one-shot, no tools, good for smoke-testing the LLM layer
 tessa analyze              # project scanner output
 tessa config show
+
+# Run the server locally (needs a TESSA_SERVER_TOKEN or it refuses to start)
+TESSA_SERVER_TOKEN=dev-token .venv/bin/tessa-server
 ```
 
 There is no separate lint/format command configured yet.
@@ -50,7 +63,22 @@ spuriously EOFError (it fails *safe*, i.e. auto-declines, so this looks like
 a bug but isn't one). If you need to script an end-to-end test of a
 confirmation flow, drive it through a real pty (see git history around the
 Milestone 3 commit for a working example using Python's `pty` module), not a
-plain pipe.
+plain pipe. `tessa ask "..." --yes` sidesteps this entirely for scripted
+end-to-end checks since it never needs a y/n prompt in the first place.
+
+To manually verify the client/server split end-to-end (not just
+`server/tests/`'s fake-provider unit tests): run a real server locally
+against the real local Ollama, point a `tessa` project config at it, and
+confirm both that it works *and* that the server's own log only shows
+`/v1/chat`/`/v1/models` traffic — never any file access — which is the
+actual proof that tool execution stayed client-side:
+
+```bash
+TESSA_SERVER_TOKEN=dev-token .venv/bin/tessa-server &
+tessa config set server_url http://127.0.0.1:8000 --project
+tessa config set api_key dev-token --project
+tessa ask "read some_file.py and summarize it" --yes
+```
 
 ## Architecture
 
@@ -60,10 +88,26 @@ Layering, outer to inner — each layer only depends on the ones below it:
 cli/     Typer commands + Rich rendering + prompt_toolkit REPL   (depends on: agent, llm, config, context)
 agent/   orchestration: system prompt, tool registry, the loop   (depends on: llm, tools, config)
 tools/   pure functions that touch the filesystem/shell/git      (depends on: nothing else in tessa)
-llm/     Ollama HTTP client, streaming, types                    (depends on: nothing else in tessa)
-context/ project scanner (languages, manifests, largest files)   (depends on: nothing else in tessa)
+llm/     ModelClient protocol + OllamaClient + RemoteClient       (depends on: nothing else in tessa)
+context/ project scanner + semantic index (chunk/embed/search)   (depends on: llm (embeddings), database
+database/ SQLite storage for the semantic index                  (depends on: nothing else in tessa)
 config/  layered JSON settings                                   (depends on: nothing else in tessa)
+
+server/  (separate package, tessa_server/) — FastAPI inference proxy.
+         Depends on tessa as a library (reuses OllamaClient directly as
+         its provider). Never touches tools/, agent/, or cli/ — tool
+         execution always stays client-side. See server/README.md.
 ```
+
+`llm/` is two concrete clients behind one structural interface
+(`llm/protocol.py::ModelClient`): `OllamaClient` talks to a local Ollama
+daemon directly, `RemoteClient` talks to a `server/` instance over HTTPS.
+Everything above `llm/` — `agent/loop.py`, `agent/tools.py`,
+`context/indexer.py`/`retriever.py` — type-hints against `ModelClient`,
+never a concrete class, and is handed whichever one `llm/factory.py::build_client`
+constructs based on `config.server_url`. This is *the* seam that makes
+local-only and client/server usage the same codepath everywhere except one
+factory function.
 
 `tools/` must stay UI- and agent-agnostic: every function takes a project
 root and plain arguments and returns plain data or raises `ToolError`. It
@@ -88,12 +132,12 @@ console. This is what makes it testable with a fake client
 - Ollama's *thinking* models (qwen3.5, deepseek-r1, ...) stream reasoning in
   a separate `message.thinking` field, not `message.content`. If you only
   read `content` the reply looks empty until the model finishes "thinking".
-  Both fields are parsed in `llm/client.py::OllamaClient._parse_chunk` and
-  rendered in `cli/ui.py` (dimmed, collapsing preview).
+  Both fields are parsed in `llm/client.py::parse_chat_line` and rendered
+  in `cli/ui.py` (dimmed, collapsing preview).
 - Tool calls arrive as one complete (non-streamed) `message.tool_calls` list
   in a single chunk, even when `stream: true` — they are never token-by-token
   streamed. See `llm/types.py::ToolCall` and the parsing in
-  `llm/client.py::OllamaClient._parse_chunk`.
+  `llm/client.py::parse_chat_line`.
 - Ollama unloads a model from memory 5 minutes after its last request by
   default, and reloading costs several seconds — noticeable as a stall on
   the first message of a new session. `config.keep_alive` (default `30m`)
@@ -113,6 +157,25 @@ console. This is what makes it testable with a fake client
   ```
   and check the response has a `tool_calls` field on `message`, not JSON text in `content`.
 
+### The client/server wire format
+
+`llm/client.py` has three module-level functions that exist specifically so
+the wire format is defined exactly once, used by both `OllamaClient` (talks
+to Ollama) and `RemoteClient` (talks to `server/`, which itself talks to
+Ollama and passes the shape through): `build_chat_payload` (request body),
+`parse_chat_line` (client-side: NDJSON line → `ChatChunk`), and
+`serialize_chat_chunk` (server-side: `ChatChunk` → NDJSON line, the exact
+inverse — `tests/test_client.py::test_serialize_chat_chunk_round_trips_through_parse_chat_line`
+pins this). If you change one, check whether the other needs to change too.
+
+`server/tessa_server/api/v1.py::get_provider` deliberately does *not* use a
+FastAPI yield-dependency for the provider, even though that's the more
+idiomatic pattern for setup/teardown. For the streaming `/v1/chat` route, a
+yield-dependency's teardown runs as soon as the endpoint function returns
+the `StreamingResponse` object — which is *before* the body has actually
+streamed — so it would close the provider's connection mid-stream. The
+provider is closed explicitly inside the generator's `finally` instead.
+
 ### Path safety
 
 Every tool that touches the filesystem resolves paths through
@@ -131,12 +194,14 @@ warning rather than erroring, so old config files don't break on upgrade.
 
 See `README.md` for the user-facing feature list and `ROADMAP.md` for the
 detailed next-steps plan. Short version: Milestones 1 (CLI + streaming
-chat), 3 (agent loop + tool calling + git), and 6 (persistent project
-memory — `agent/facts.py`, distinct from the raw session transcript in
-`agent/memory.py`) are done. Milestone 2 (embeddings/retrieval, needed once
-a project is too big for full-file context) is not started. Check
-`ROADMAP.md` before picking up new work — it has the reasoning for why M3
-was done before M2, and concrete next steps with file-level pointers.
+chat), 2 (semantic retrieval), 3 (agent loop + tool calling + git), 6
+(persistent project memory), and the client/server split (`server/`,
+remote inference over Tailscale) are all done. What's left is mostly
+deferred server work that the current design doesn't block but doesn't
+need yet (real multi-user auth, non-Ollama providers, a task queue) plus
+M7 (plugins, no design started). Check `ROADMAP.md` before picking up new
+work — it has file-level pointers and the reasoning behind past ordering
+decisions (e.g. why M3 shipped before M2).
 
 ## Standing preferences for this repo
 

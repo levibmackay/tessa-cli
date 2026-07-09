@@ -26,7 +26,6 @@ context — each one names the files to touch and what "done" looks like.
   `/memory` / `/forget <n>` slash commands in chat, or `tessa memory
   add/list/forget` outside of chat. Verified end-to-end: a fact added in one
   process is present in a fresh process's system prompt with no extra steps.
-
 - **CI.** `.github/workflows/test.yml` runs the full suite on Python
   3.11-3.13 for every push/PR. Verified against a clean clone with no
   pre-existing git identity — the git-tool tests set repo-local identity
@@ -45,6 +44,72 @@ context — each one names the files to touch and what "done" looks like.
   ones, and confirmed the real agent loop (not just the retriever in
   isolation) chooses `search_semantic` correctly and gives the right
   answer against a live Ollama daemon, 3/3 runs.
+- **Undo command.** `tessa restore list` / `tessa restore apply <n>`.
+  Fixed a real bug along the way — backups were previously named
+  `{stamp}-{filename}` with no directory info, so two files with the same
+  name in different directories (e.g. `src/utils.py` and `tests/utils.py`)
+  would silently collide. Backups now live at
+  `.tessa/backups/{stamp}/{original/relative/path}`, mirroring the
+  project tree, so restoring is unambiguous.
+- **`--yes` / non-interactive mode.** `tessa ask "..." --yes` gives `ask`
+  full tool access via `ui.auto_confirm`, which approves everything except
+  tools/commands flagged dangerous (no human present to approve real
+  danger, so it fails safe rather than approving blindly). Plain `tessa
+  ask` without `--yes` is unchanged — still tool-free chat.
+- **More CLI-level tests.** `tests/test_cli_commands.py` covers `analyze`,
+  `init`, `config show/set`, `restore list/apply`, and `--version` via
+  `CliRunner`. `ask`/`models`/the chat REPL are deliberately not covered
+  this way since they need a live Ollama daemon — see "Testing against the
+  real Ollama daemon" in `CLAUDE.md` for how those get verified instead.
+- **Cross-platform audit.** Checked (not run): grepped the source for
+  hardcoded macOS paths, unix-only path joins, and `os.name`/`sys.platform`
+  branches — none found; everything routes through `pathlib`. The one
+  real, unavoidable limitation: `tools/terminal.py::run_command` uses
+  `subprocess.run(..., shell=True)`, which invokes `cmd.exe` on Windows,
+  not bash — so unix-style commands a model generates (`ls`, `grep`,
+  `rm -rf`) won't translate as-is. This has never actually been run on
+  Windows or Linux; "checked via static analysis" is not the same claim
+  as "tested," and the distinction matters if you're about to rely on it.
+- **Client/server split.** New `server/` package (FastAPI) so Ollama can
+  run on a separate, more powerful machine (e.g. a gaming PC with a real
+  GPU) while `tessa` keeps running from a laptop with no change in feel.
+  Resolved design fork: tool execution (file edits, git, shell) stays
+  **client-side** always — the server is purely an inference proxy
+  (`/v1/health`, `/v1/models`, `/v1/chat`, `/v1/embed`), never touches a
+  filesystem. This means no WebSockets are needed (confirmation prompts
+  never have to interrupt the server mid-stream) and a chat turn keeps the
+  same shape Ollama's own `/api/chat` already has.
+  - `llm/protocol.py::ModelClient` — the structural interface both
+    `OllamaClient` (local) and `RemoteClient` (server/tessa_server, over
+    HTTPS + bearer auth) satisfy; everything downstream (`agent/loop.py`,
+    `agent/tools.py`, `context/indexer.py`/`retriever.py`) type-hints
+    against this, not a concrete class.
+  - `llm/factory.py::build_client(config)` picks which one to construct
+    based on whether `config.server_url` is set — local-only usage is
+    completely unaffected (zero config changes needed).
+  - `llm/client.py` gained three module-level helpers so the wire format
+    exists in exactly one place: `build_chat_payload`, `parse_chat_line`
+    (client-side parsing), `serialize_chat_chunk` (server-side, the
+    inverse) — `server/tessa_server/api/v1.py` reuses `OllamaClient`
+    directly as its provider rather than reimplementing Ollama-calling
+    logic.
+  - Auth: bearer token, `{token: user_id}` mapping sourced from env vars
+    (`TESSA_SERVER_TOKEN` / `TESSA_SERVER_TOKENS`) — swappable for a real
+    multi-user store later without changing the auth dependency's
+    interface. HTTPS via `tailscale cert` (see `server/README.md`) rather
+    than a self-signed cert, since there's no public domain to get a
+    normal one for a Tailscale-only host.
+  - Verified end-to-end against the real Ollama daemon: started the real
+    server locally, pointed a real `tessa` session at it, ran a full
+    chat + tool-call turn (`read_file`) through the whole stack, confirmed
+    via server logs that only `/v1/chat` traffic occurred — no file access
+    — proving tool execution genuinely stayed client-side. Also confirmed
+    local-only mode (`server_url` unset) is completely unaffected.
+  - 154 tests total (140 in the CLI package, 14 in `server/`, run
+    separately since they're two installable packages) — server tests run
+    against a fake `ModelClient` double, no real Ollama needed.
+  - Full design reasoning, API shapes, and the folder structure live in
+    `server/README.md` and the plan this was built from.
 
 **Model gotcha found while shipping M2:** not every model that emits
 reasonable-looking tool-call JSON actually wires it into Ollama's
@@ -64,48 +129,44 @@ bottleneck as of M3. M2 removes that ceiling for larger repos.
 
 ### M7 — Plugins (stretch)
 
-Lowest priority; only worth doing once M2 is solid. Original idea from
-project scoping: VS Code extension, browser automation, voice mode, web
-search, doc lookup, CI/CD integration. No design work has started — if you
-pick this up, start by defining what a "plugin" actually extends (a new
-tool? a new slash command? both?) before writing code.
+Lowest priority; only worth doing once the server is proven out in daily
+use. Original idea from project scoping: VS Code extension, browser
+automation, voice mode, web search, doc lookup, CI/CD integration. No
+design work has started — if you pick this up, start by defining what a
+"plugin" actually extends (a new tool? a new slash command? both?) before
+writing code.
+
+### Deferred server work
+
+Not started, not blocked by the current design — see `server/README.md`
+and `ROADMAP.md`'s history for the client/server split entry above:
+
+- **Real multi-user token storage.** Today's `{token: user_id}` dict
+  sourced from env vars is enough for one person. A real store (SQLite,
+  expiry, revocation) only needs `config/settings.py::_load_tokens` and
+  wherever it's read from to change — the auth dependency's interface
+  (`settings.tokens.get(token)`) was deliberately kept stable for this.
+- **Non-Ollama providers** (OpenAI, Anthropic, Gemini) — opt-in, bring
+  your own key, never the default (that would compromise the whole "no
+  API keys required" premise for anyone not opting in). Each is just a
+  new class satisfying `tessa.llm.protocol.ModelClient`; `services/ollama_provider.py`
+  is the only file that currently decides which one gets constructed.
+- **Task queue / background jobs, project indexing service, vector DB
+  beyond the current SQLite approach, web dashboard.** All from the
+  original project scoping; none designed yet.
+- **Connection pooling for the server's Ollama provider.** Right now
+  `api/v1.py::get_provider` constructs a fresh `OllamaClient` (and thus a
+  fresh httpx connection) per request — simple and correct for one user,
+  worth revisiting before "multiple concurrent users" is real.
+- **AMD GPU acceleration is unverified** on the actual target hardware
+  (RX 9060 XT) — Ollama's AMD support runs through ROCm, better on Linux
+  than Windows. `ollama ps` should show GPU usage during a request; if it
+  silently falls back to CPU, the server won't actually be faster than
+  local inference on a decent laptop.
 
 ## Smaller polish items (no milestone, pick up anytime)
 
-- ~~**Undo command.**~~ Done: `tessa restore list` / `tessa restore apply
-  <n>`. Fixed a real bug along the way — backups were previously named
-  `{stamp}-{filename}` with no directory info, so two files with the same
-  name in different directories (e.g. `src/utils.py` and
-  `tests/utils.py`) would silently collide. Backups now live at
-  `.tessa/backups/{stamp}/{original/relative/path}`, mirroring the
-  project tree, so restoring is unambiguous.
-- ~~**More CLI-level tests.**~~ Done: `tests/test_cli_commands.py` covers
-  `analyze`, `init`, `config show/set`, `restore list/apply`, and
-  `--version` via `CliRunner` (121 tests total). `ask`/`models`/the chat
-  REPL are deliberately not covered this way since they need a live
-  Ollama daemon — see "Testing against the real Ollama daemon" in
-  `CLAUDE.md` for how those get verified instead.
-- **Cross-platform.** Checked (not run): grepped the source for hardcoded
-  macOS paths, unix-only path joins, and `os.name`/`sys.platform`
-  branches — none found; everything routes through `pathlib`. The one
-  real, unavoidable limitation: `tools/terminal.py::run_command` uses
-  `subprocess.run(..., shell=True)`, which invokes `cmd.exe` on Windows,
-  not bash — so unix-style commands a model generates (`ls`, `grep`,
-  `rm -rf`) won't translate as-is. This has never actually been run on
-  Windows or Linux; "checked via static analysis" is not the same claim
-  as "tested," and the distinction matters if you're about to rely on it.
-- **Undo command.** Writes/deletes already back up to `.tessa/backups/`
-  before touching a file, but there's no `tessa restore` to pull one back —
-  right now that's a manual `cp`.
-- ~~**`--yes` / non-interactive mode.**~~ Done: `tessa ask "..." --yes`
-  gives `ask` full tool access via `ui.auto_confirm`, which approves
-  everything except tools/commands flagged dangerous (no human present to
-  approve real danger, so it fails safe rather than approving blindly).
-  Plain `tessa ask` without `--yes` is unchanged — still tool-free chat.
 - **Packaging.** `pyproject.toml` is set up for `pip install -e .`; hasn't
   been published anywhere (PyPI, or even a simple `brew tap`) so the README
-  install instructions still say "clone this repo."
-- **Cross-platform check.** Everything is written with `pathlib` and should
-  be OS-agnostic, but has only actually been run on macOS (Apple Silicon);
-  the README's symlink step (`/opt/homebrew/bin`) is Mac-specific — worth a
-  pass to confirm behavior on Linux, and Windows is untested entirely.
+  install instructions still say "clone this repo." Same applies to
+  `server/pyproject.toml`.

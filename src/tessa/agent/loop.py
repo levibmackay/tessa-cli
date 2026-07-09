@@ -11,7 +11,7 @@ from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 
 from tessa.agent.tools import ToolContext, ToolResult, ToolSpec
-from tessa.llm.client import OllamaClient
+from tessa.llm.protocol import ModelClient
 from tessa.llm.types import ChatChunk, Message, ToolCall
 from tessa.tools.filesystem import ToolError
 from tessa.tools.paths import PathEscapesProjectError
@@ -58,7 +58,7 @@ def execute_tool(spec: ToolSpec | None, call: ToolCall, ctx: ToolContext) -> Too
 
 def run_agent_turn(
     *,
-    client: OllamaClient,
+    client: ModelClient,
     model: str,
     temperature: float,
     num_ctx: int,

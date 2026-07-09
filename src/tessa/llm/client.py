@@ -92,7 +92,7 @@ class OllamaClient:
         except httpx.HTTPError as exc:
             raise OllamaError(f"Embedding request failed: {exc}") from exc
         if response.status_code != 200:
-            raise OllamaError(_extract_error(response.text, response.status_code))
+            raise OllamaError(extract_error(response.text, response.status_code))
         embeddings = response.json().get("embeddings")
         if embeddings is None:
             raise OllamaError("Ollama returned no embeddings.")
@@ -126,27 +126,16 @@ class OllamaClient:
         request (e.g. "30m"); avoids a multi-second reload on the next
         message. None leaves Ollama's own default (5 minutes) in place.
         """
-        payload: dict = {
-            "model": model,
-            "messages": [m.to_dict() for m in messages],
-            "stream": True,
-            "options": {"temperature": temperature, "num_ctx": num_ctx},
-        }
-        if think is not None:
-            payload["think"] = think
-        if keep_alive is not None:
-            payload["keep_alive"] = keep_alive
-        if tools:
-            payload["tools"] = tools
+        payload = build_chat_payload(model, messages, temperature, num_ctx, think, tools, keep_alive)
         try:
             with self._client.stream("POST", "/api/chat", json=payload) as response:
                 if response.status_code != 200:
                     body = response.read().decode("utf-8", errors="replace")
-                    raise OllamaError(_extract_error(body, response.status_code))
+                    raise OllamaError(extract_error(body, response.status_code))
                 for line in response.iter_lines():
                     if not line.strip():
                         continue
-                    chunk = self._parse_chunk(line)
+                    chunk = parse_chat_line(line)
                     if chunk is not None:
                         yield chunk
                         if chunk.done:
@@ -155,42 +144,6 @@ class OllamaClient:
             raise OllamaConnectionError(self.host) from exc
         except httpx.HTTPError as exc:
             raise OllamaError(f"Chat request failed: {exc}") from exc
-
-    @staticmethod
-    def _parse_chunk(line: str) -> ChatChunk | None:
-        try:
-            data = json.loads(line)
-        except json.JSONDecodeError:
-            logger.warning("Skipping malformed stream line: %.120s", line)
-            return None
-        if "error" in data:
-            raise OllamaError(data["error"])
-        message = data.get("message", {})
-        tool_calls = [
-            ToolCall(
-                name=tc.get("function", {}).get("name", ""),
-                arguments=tc.get("function", {}).get("arguments", {}) or {},
-            )
-            for tc in message.get("tool_calls") or []
-        ]
-        if data.get("done"):
-            stats = {
-                k: data[k]
-                for k in ("total_duration", "eval_count", "prompt_eval_count")
-                if k in data
-            }
-            return ChatChunk(
-                content=message.get("content", ""),
-                thinking=message.get("thinking", ""),
-                tool_calls=tool_calls,
-                done=True,
-                stats=stats,
-            )
-        return ChatChunk(
-            content=message.get("content", ""),
-            thinking=message.get("thinking", ""),
-            tool_calls=tool_calls,
-        )
 
     def close(self) -> None:
         self._client.close()
@@ -202,8 +155,100 @@ class OllamaClient:
         self.close()
 
 
-def _extract_error(body: str, status: int) -> str:
+def extract_error(body: str, status: int) -> str:
     try:
         return json.loads(body).get("error", body)
     except json.JSONDecodeError:
         return f"HTTP {status}: {body[:200]}"
+
+
+def build_chat_payload(
+    model: str,
+    messages: list[Message],
+    temperature: float = 0.7,
+    num_ctx: int = 8192,
+    think: bool | None = None,
+    tools: list[dict] | None = None,
+    keep_alive: str | None = None,
+) -> dict:
+    """Build an Ollama-shaped /api/chat request body.
+
+    Shared between `OllamaClient` (sends this to Ollama directly) and
+    `RemoteClient` (sends this to a Tessa Server, which forwards it to its
+    own Ollama largely as-is) so both stay byte-for-byte consistent.
+    """
+    payload: dict = {
+        "model": model,
+        "messages": [m.to_dict() for m in messages],
+        "stream": True,
+        "options": {"temperature": temperature, "num_ctx": num_ctx},
+    }
+    if think is not None:
+        payload["think"] = think
+    if keep_alive is not None:
+        payload["keep_alive"] = keep_alive
+    if tools:
+        payload["tools"] = tools
+    return payload
+
+
+def serialize_chat_chunk(chunk: ChatChunk) -> dict:
+    """The inverse of `parse_chat_line`: a ChatChunk back into an
+    Ollama-shaped NDJSON line (as a dict, ready for `json.dumps`).
+
+    Used by the Tessa Server (server/tessa_server/api/v1.py) to re-emit
+    what it gets back from its own Ollama provider in the same wire shape
+    `RemoteClient` expects — keeping exactly one chunk format across the
+    whole system regardless of which provider produced it.
+    """
+    message: dict = {"content": chunk.content}
+    if chunk.thinking:
+        message["thinking"] = chunk.thinking
+    if chunk.tool_calls:
+        message["tool_calls"] = [tc.to_dict() for tc in chunk.tool_calls]
+    line: dict = {"message": message, "done": chunk.done}
+    if chunk.done:
+        line.update(chunk.stats)
+    return line
+
+
+def parse_chat_line(line: str) -> ChatChunk | None:
+    """Parse one NDJSON line from Ollama's /api/chat streaming shape.
+
+    Shared between `OllamaClient` (talking to Ollama directly) and
+    `RemoteClient` (talking to a Tessa Server, which passes this exact
+    shape through from its own Ollama) so the parsing logic exists once.
+    """
+    try:
+        data = json.loads(line)
+    except json.JSONDecodeError:
+        logger.warning("Skipping malformed stream line: %.120s", line)
+        return None
+    if "error" in data:
+        raise OllamaError(data["error"])
+    message = data.get("message", {})
+    tool_calls = [
+        ToolCall(
+            name=tc.get("function", {}).get("name", ""),
+            arguments=tc.get("function", {}).get("arguments", {}) or {},
+        )
+        for tc in message.get("tool_calls") or []
+    ]
+    if data.get("done"):
+        stats = {
+            k: data[k]
+            for k in ("total_duration", "eval_count", "prompt_eval_count")
+            if k in data
+        }
+        return ChatChunk(
+            content=message.get("content", ""),
+            thinking=message.get("thinking", ""),
+            tool_calls=tool_calls,
+            done=True,
+            stats=stats,
+        )
+    return ChatChunk(
+        content=message.get("content", ""),
+        thinking=message.get("thinking", ""),
+        tool_calls=tool_calls,
+    )

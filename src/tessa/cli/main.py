@@ -38,7 +38,9 @@ from tessa.config.settings import (
 )
 from tessa.context.indexer import EMBED_MODEL, build_index
 from tessa.context.scanner import scan_project
-from tessa.llm.client import OllamaClient, OllamaError
+from tessa.llm.client import OllamaError
+from tessa.llm.factory import build_client
+from tessa.llm.protocol import ModelClient
 from tessa.llm.types import Message
 from tessa.tools.filesystem import apply_write, list_backups, restore_backup
 
@@ -92,7 +94,7 @@ def ask(
     config = load_config()
     if model:
         config.model = model
-    with OllamaClient(host=config.ollama_host) as client:
+    with build_client(config) as client:
         try:
             resolved = resolve_model(client, config)
             if yes:
@@ -115,7 +117,7 @@ def ask(
         raise typer.Exit(1)
 
 
-def _ask_with_tools(client: OllamaClient, model: str, config: TessaConfig, question: str) -> tuple[str, dict]:
+def _ask_with_tools(client: ModelClient, model: str, config: TessaConfig, question: str) -> tuple[str, dict]:
     """Run one question through the full agent loop (tools + auto-confirm)."""
     from tessa.agent.loop import run_agent_turn
     from tessa.agent.prompts import build_system_prompt
@@ -172,9 +174,10 @@ def build_semantic_index(
         raise typer.Exit(1)
     root = path.resolve()
     config = load_config(project_root=root)
-    with OllamaClient(host=config.ollama_host) as client:
+    with build_client(config) as client:
         if not client.is_alive():
-            ui.print_error(f"Cannot reach Ollama at {config.ollama_host}.")
+            target = config.server_url or config.ollama_host
+            ui.print_error(f"Cannot reach {target}.")
             raise typer.Exit(1)
         if not client.has_model(EMBED_MODEL):
             ui.print_error(f"Embedding model not installed. Run `ollama pull {EMBED_MODEL}` first.")
@@ -191,7 +194,7 @@ def build_semantic_index(
 def models() -> None:
     """List models installed in Ollama."""
     config = load_config()
-    with OllamaClient(host=config.ollama_host) as client:
+    with build_client(config) as client:
         try:
             installed = client.list_models()
         except OllamaError as exc:
@@ -231,8 +234,9 @@ def config_show() -> None:
     ui.console.print(f"[dim]global:[/dim]  {global_config_path()}")
     if root:
         ui.console.print(f"[dim]project:[/dim] {project_config_path(root)}")
+    unset_labels = {"model": "auto", "server_url": "not set (using local Ollama)", "api_key": "not set"}
     for key, value in vars(config).items():
-        shown = value if value is not None else "[dim]auto[/dim]"
+        shown = value if value is not None else f"[dim]{unset_labels.get(key, 'not set')}[/dim]"
         ui.console.print(f"  {key} = {shown}")
 
 

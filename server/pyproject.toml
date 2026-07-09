@@ -1,0 +1,34 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "tessa-server"
+version = "0.1.0"
+description = "Tessa Server — a FastAPI inference proxy so a lightweight tessa CLI client can run against a remote Ollama over HTTPS."
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "Levi Mackay" }]
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "httpx>=0.27",
+]
+# Also requires the `tessa` package (../src) in the same environment —
+# from the repo root: pip install -e . && pip install -e server/
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov>=5.0",
+]
+
+[project.scripts]
+tessa-server = "tessa_server.main:run"
+
+[tool.hatch.build.targets.wheel]
+packages = ["tessa_server"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
