@@ -157,9 +157,16 @@ class OllamaClient:
 
 def extract_error(body: str, status: int) -> str:
     try:
-        return json.loads(body).get("error", body)
+        message = json.loads(body).get("error", body)
     except json.JSONDecodeError:
         return f"HTTP {status}: {body[:200]}"
+    if isinstance(message, str) and "does not support tools" in message:
+        message += (
+            " (this model's Ollama chat template has no tool-calling support at all — "
+            "pull one that does, e.g. `ollama pull qwen3.5` or a llama3.1+ model, on "
+            "whichever Ollama instance is actually handling the request)"
+        )
+    return message
 
 
 def build_chat_payload(

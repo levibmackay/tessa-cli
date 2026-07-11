@@ -25,6 +25,12 @@ dependencies = [
     "httpx>=0.27",
     "pyfiglet>=1.0",
     "numpy>=1.26",
+    "keyring>=25.0",
+    "yfinance>=0.2",
+    "feedparser>=6.0",
+    "google-api-python-client>=2.140",
+    "google-auth-oauthlib>=1.2",
+    "msal>=1.30",
 ]
 
 [project.optional-dependencies]

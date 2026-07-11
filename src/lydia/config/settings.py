@@ -45,6 +45,12 @@ class LydiaConfig:
     # today's behavior, unchanged.
     server_url: str | None = None
     api_key: str | None = None  # bearer token for server_url, if set
+    # Personal-assistant settings. Actual credentials (OAuth tokens, the
+    # Canvas access token) never live here — see config/secrets.py — only
+    # non-sensitive companion values do.
+    canvas_base_url: str | None = None  # e.g. "https://school.instructure.com"
+    briefing_schedule_enabled: bool = False
+    briefing_schedule_time: str = "08:00"  # HH:MM, 24-hour, local time
 
     @property
     def think_flag(self) -> bool | None:

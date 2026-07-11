@@ -5,7 +5,7 @@ import json
 import httpx
 import pytest
 
-from lydia.llm.client import OllamaClient, OllamaError, parse_chat_line, serialize_chat_chunk
+from lydia.llm.client import OllamaClient, OllamaError, extract_error, parse_chat_line, serialize_chat_chunk
 from lydia.llm.types import ChatChunk, Message, ToolCall
 
 
@@ -131,3 +131,19 @@ def test_malformed_stream_lines_are_skipped() -> None:
 
     chunks = list(make_client(handler).chat_stream("m", [Message("user", "hi")]))
     assert "".join(c.content for c in chunks) == "ok"
+
+
+def test_extract_error_adds_hint_for_unsupported_tools_models() -> None:
+    body = json.dumps({"error": "registry.ollama.ai/library/phi3.5:latest does not support tools"})
+    message = extract_error(body, 400)
+    assert "does not support tools" in message
+    assert "ollama pull qwen3.5" in message
+
+
+def test_extract_error_passes_through_other_errors_unchanged() -> None:
+    body = json.dumps({"error": "model 'nope' not found"})
+    assert extract_error(body, 404) == "model 'nope' not found"
+
+
+def test_extract_error_falls_back_for_non_json_body() -> None:
+    assert extract_error("not json", 500) == "HTTP 500: not json"

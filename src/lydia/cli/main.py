@@ -10,6 +10,11 @@
     lydia init                 create .lydia/ in the current project
     lydia config show          print effective configuration
     lydia config set KEY VAL   set a config value (global or --project)
+    lydia auth login PROVIDER  connect gmail, outlook, or canvas
+    lydia auth status          show which sources are connected
+    lydia auth logout PROVIDER disconnect a source
+    lydia briefing run         generate today's personal briefing
+    lydia briefing show        print the last generated briefing
 """
 
 from __future__ import annotations
@@ -56,6 +61,12 @@ memory_app = typer.Typer(help="View and manage remembered project facts.")
 app.add_typer(memory_app, name="memory")
 restore_app = typer.Typer(help="List and restore file backups made by write_file/delete_file.")
 app.add_typer(restore_app, name="restore")
+auth_app = typer.Typer(help="Connect Lydia to Gmail, Outlook, and Canvas for the personal-assistant tools.")
+app.add_typer(auth_app, name="auth")
+briefing_app = typer.Typer(help="Generate and view Lydia's daily personal briefing.")
+app.add_typer(briefing_app, name="briefing")
+schedule_app = typer.Typer(help="Manage the daily scheduled briefing (macOS launchd).")
+briefing_app.add_typer(schedule_app, name="schedule")
 
 
 def _memory_root() -> Path:
@@ -331,6 +342,140 @@ def restore_apply(index: int = typer.Argument(..., help="Backup number, as shown
         return
     message = apply_write(root, proposal)
     ui.print_info(message)
+
+
+AUTH_PROVIDERS = ("gmail", "outlook", "canvas")
+
+
+@auth_app.command("login")
+def auth_login(
+    provider: str = typer.Argument(..., help="gmail | outlook | canvas"),
+    client_id: str | None = typer.Option(
+        None, "--client-id", help="Outlook only: the Azure app's Application (client) ID."
+    ),
+    base_url: str | None = typer.Option(
+        None, "--base-url", help="Canvas only: e.g. https://school.instructure.com"
+    ),
+    token: str | None = typer.Option(
+        None, "--token", help="Canvas only: a personal access token (prompted if omitted)."
+    ),
+) -> None:
+    """Connect a personal-assistant data source (Gmail, Outlook, or Canvas)."""
+    if provider == "gmail":
+        from lydia.connectors.auth import gmail_oauth
+        ui.print_info("Opening a browser to sign in to Gmail...")
+        try:
+            gmail_oauth.login()
+        except gmail_oauth.GmailAuthError as exc:
+            ui.print_error(str(exc))
+            raise typer.Exit(1)
+        ui.print_info("Signed in to Gmail.")
+    elif provider == "outlook":
+        from lydia.connectors.auth import outlook_oauth
+        if not client_id:
+            client_id = typer.prompt("Azure app Application (client) ID")
+        try:
+            outlook_oauth.login(client_id, on_code=lambda msg: ui.console.print(msg))
+        except outlook_oauth.OutlookAuthError as exc:
+            ui.print_error(str(exc))
+            raise typer.Exit(1)
+        ui.print_info("Signed in to Outlook.")
+    elif provider == "canvas":
+        from lydia.config import secrets
+        if not base_url:
+            base_url = typer.prompt("Canvas base URL (e.g. https://school.instructure.com)")
+        if not token:
+            token = typer.prompt("Canvas personal access token", hide_input=True)
+        save_config_value("canvas_base_url", base_url, global_config_path())
+        secrets.set_secret(secrets.CANVAS_TOKEN, token)
+        ui.print_info(f"Canvas configured: {base_url}")
+    else:
+        ui.print_error(f"Unknown provider '{provider}'. Use one of: {', '.join(AUTH_PROVIDERS)}.")
+        raise typer.Exit(1)
+
+
+@auth_app.command("status")
+def auth_status() -> None:
+    """Show which personal-assistant sources are connected."""
+    from lydia.config import secrets
+    from lydia.connectors.auth import gmail_oauth, outlook_oauth
+
+    config = load_config()
+    rows = [
+        ("gmail", gmail_oauth.is_logged_in()),
+        ("outlook", outlook_oauth.is_logged_in()),
+        ("canvas", bool(config.canvas_base_url and secrets.get_secret(secrets.CANVAS_TOKEN))),
+    ]
+    for name, connected in rows:
+        marker = "[green]connected[/green]" if connected else "[dim]not connected[/dim]"
+        ui.console.print(f"  {name:<8} {marker}")
+
+
+@auth_app.command("logout")
+def auth_logout(provider: str = typer.Argument(..., help="gmail | outlook | canvas")) -> None:
+    """Disconnect a personal-assistant data source."""
+    if provider == "gmail":
+        from lydia.connectors.auth import gmail_oauth
+        gmail_oauth.logout()
+    elif provider == "outlook":
+        from lydia.connectors.auth import outlook_oauth
+        outlook_oauth.logout()
+    elif provider == "canvas":
+        from lydia.config import secrets
+        secrets.delete_secret(secrets.CANVAS_TOKEN)
+    else:
+        ui.print_error(f"Unknown provider '{provider}'. Use one of: {', '.join(AUTH_PROVIDERS)}.")
+        raise typer.Exit(1)
+    ui.print_info(f"Disconnected {provider}.")
+
+
+@briefing_app.command("run")
+def briefing_run(
+    notify: bool = typer.Option(
+        False, "--notify", help="Also push a macOS notification with a one-line summary."
+    ),
+) -> None:
+    """Generate today's personal briefing (email, Canvas, stock market, AI news)."""
+    from lydia.cli.briefing import run_briefing
+    raise typer.Exit(run_briefing(load_config(), notify=notify))
+
+
+@briefing_app.command("show")
+def briefing_show() -> None:
+    """Print the last generated briefing."""
+    from lydia.cli.briefing import show_briefing
+    raise typer.Exit(show_briefing())
+
+
+@schedule_app.command("enable")
+def schedule_enable(
+    time: str | None = typer.Option(
+        None, "--time", help="24-hour HH:MM, e.g. 08:00. Defaults to the last-used (or 08:00) time."
+    ),
+) -> None:
+    """Schedule `lydia briefing run --notify` to fire automatically every day."""
+    from lydia.cli import scheduler
+
+    config = load_config()
+    chosen_time = time or config.briefing_schedule_time
+    try:
+        plist_path = scheduler.enable(chosen_time)
+    except scheduler.ScheduleError as exc:
+        ui.print_error(str(exc))
+        raise typer.Exit(1)
+    save_config_value("briefing_schedule_enabled", True, global_config_path())
+    save_config_value("briefing_schedule_time", chosen_time, global_config_path())
+    ui.print_info(f"Scheduled daily briefing at {chosen_time} ({plist_path}).")
+
+
+@schedule_app.command("disable")
+def schedule_disable() -> None:
+    """Stop the scheduled daily briefing."""
+    from lydia.cli import scheduler
+
+    scheduler.disable()
+    save_config_value("briefing_schedule_enabled", False, global_config_path())
+    ui.print_info("Scheduled briefing disabled.")
 
 
 def main() -> None:

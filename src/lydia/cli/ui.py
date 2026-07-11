@@ -80,6 +80,10 @@ def print_info(message: str) -> None:
     console.print(f"[{ACCENT}]•[/{ACCENT}] {message}")
 
 
+def print_warning(message: str) -> None:
+    console.print(f"[bold yellow]warning:[/bold yellow] {message}")
+
+
 def stream_response(chunks: Iterator[ChatChunk]) -> tuple[str, dict]:
     """Render a streaming reply as live-updating Markdown.
 

@@ -21,6 +21,7 @@ from typing import Any, Callable, Literal
 
 from lydia.agent import facts
 from lydia.config.settings import LydiaConfig
+from lydia.connectors import ConnectorError
 from lydia.llm.protocol import ModelClient
 from lydia.tools import filesystem, git
 from lydia.tools.terminal import classify_command, run_command
@@ -241,6 +242,91 @@ def _remember(args: dict, ctx: ToolContext) -> ToolResult:
     return ToolResult(ok=True, content=message, summary=message)
 
 
+# -- personal assistant ------------------------------------------------------
+# Connector modules (Gmail/Outlook/Canvas/yfinance/feedparser) are imported
+# lazily inside each handler, same pattern as _search_semantic above, so
+# `lydia ask`/coding-only sessions never pay for those imports.
+
+
+def _check_email(args: dict, ctx: ToolContext) -> ToolResult:
+    account = args.get("account")
+    if account == "personal":
+        from lydia.config import secrets
+        from lydia.connectors.email_gmail import format_emails, get_recent_emails
+
+        credentials_json = secrets.get_secret(secrets.GMAIL_REFRESH_TOKEN)
+        if not credentials_json:
+            return ToolResult(
+                ok=False,
+                content="Not logged in to Gmail. Tell the user to run `lydia auth login gmail`.",
+                summary="not logged in",
+            )
+        try:
+            summaries = get_recent_emails(credentials_json)
+        except ConnectorError as exc:
+            return ToolResult(ok=False, content=str(exc), summary="error")
+        return ToolResult(
+            ok=True, content=format_emails(summaries),
+            summary=f"checked personal email ({len(summaries)} messages)",
+        )
+    if account == "school":
+        from lydia.connectors.auth import outlook_oauth
+        from lydia.connectors.email_outlook import format_emails, get_recent_emails
+
+        try:
+            token = outlook_oauth.get_access_token()
+            summaries = get_recent_emails(token)
+        except (outlook_oauth.OutlookAuthError, ConnectorError) as exc:
+            return ToolResult(ok=False, content=str(exc), summary="error")
+        return ToolResult(
+            ok=True, content=format_emails(summaries),
+            summary=f"checked school email ({len(summaries)} messages)",
+        )
+    return ToolResult(ok=False, content=f"Unknown account '{account}'. Use 'personal' or 'school'.", summary="error")
+
+
+def _check_canvas(args: dict, ctx: ToolContext) -> ToolResult:
+    from lydia.config import secrets
+    from lydia.connectors.canvas import format_assignments, get_upcoming_assignments
+
+    base_url = ctx.config.canvas_base_url
+    token = secrets.get_secret(secrets.CANVAS_TOKEN)
+    if not base_url or not token:
+        return ToolResult(
+            ok=False,
+            content="Canvas isn't set up. Tell the user to run `lydia auth login canvas`.",
+            summary="not configured",
+        )
+    try:
+        assignments = get_upcoming_assignments(base_url, token)
+    except ConnectorError as exc:
+        return ToolResult(ok=False, content=str(exc), summary="error")
+    return ToolResult(
+        ok=True, content=format_assignments(assignments),
+        summary=f"checked Canvas ({len(assignments)} upcoming assignments)",
+    )
+
+
+def _check_stocks(args: dict, ctx: ToolContext) -> ToolResult:
+    from lydia.connectors.stocks import format_market_summary, get_market_summary
+
+    try:
+        snapshots = get_market_summary()
+    except ConnectorError as exc:
+        return ToolResult(ok=False, content=str(exc), summary="error")
+    return ToolResult(ok=True, content=format_market_summary(snapshots), summary="checked stock market")
+
+
+def _check_news(args: dict, ctx: ToolContext) -> ToolResult:
+    from lydia.connectors.news import format_news, get_ai_news
+
+    try:
+        items = get_ai_news()
+    except ConnectorError as exc:
+        return ToolResult(ok=False, content=str(exc), summary="error")
+    return ToolResult(ok=True, content=format_news(items), summary=f"checked AI news ({len(items)} headlines)")
+
+
 def build_registry() -> list[ToolSpec]:
     return [
         ToolSpec(
@@ -382,5 +468,32 @@ def build_registry() -> list[ToolSpec]:
                 "required": ["fact"],
             },
             "safe", _remember,
+        ),
+        ToolSpec(
+            "check_email",
+            "Check recent email in the user's personal Gmail or school Outlook inbox.",
+            {
+                "type": "object",
+                "properties": {
+                    "account": {
+                        "type": "string", "enum": ["personal", "school"],
+                        "description": "Which inbox to check: 'personal' (Gmail) or 'school' (Outlook)",
+                    },
+                },
+                "required": ["account"],
+            },
+            "safe", _check_email,
+        ),
+        ToolSpec(
+            "check_canvas", "Check upcoming Canvas assignments across the user's active courses.",
+            {"type": "object", "properties": {}}, "safe", _check_canvas,
+        ),
+        ToolSpec(
+            "check_stocks", "Get a general stock market snapshot (S&P 500, Nasdaq, Dow) — not a personal portfolio.",
+            {"type": "object", "properties": {}}, "safe", _check_stocks,
+        ),
+        ToolSpec(
+            "check_news", "Get recent AI news headlines from a curated set of sources.",
+            {"type": "object", "properties": {}}, "safe", _check_news,
         ),
     ]

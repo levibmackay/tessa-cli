@@ -18,7 +18,7 @@ from lydia.config.settings import GLOBAL_DIR, LydiaConfig, find_project_root
 from lydia.context.scanner import ProjectSummary, scan_project
 from lydia.llm.client import OllamaError
 from lydia.llm.factory import build_client
-from lydia.llm.models import pick_default_model
+from lydia.llm.models import pick_default_model, supports_tool_calling
 from lydia.llm.protocol import ModelClient
 from lydia.llm.types import Message
 
@@ -102,11 +102,28 @@ def resolve_model(client: ModelClient, config: LydiaConfig) -> str:
     models = client.list_models()
     if not models:
         raise OllamaError("No models installed. Pull one first, e.g. `ollama pull qwen3.5`.")
+
+    chosen: str | None = None
     if config.model:
         if any(m.name == config.model or m.name.split(":")[0] == config.model for m in models):
-            return config.model
-        ui.print_error(f"Configured model '{config.model}' is not installed; auto-selecting.")
-    return pick_default_model(models) or models[0].name
+            chosen = config.model
+        else:
+            ui.print_error(f"Configured model '{config.model}' is not installed; auto-selecting.")
+    if chosen is None:
+        chosen = pick_default_model(models) or models[0].name
+
+    # Covers both cases: an explicitly-configured bad model, and auto-select
+    # being forced to fall back to one because nothing else qualifies (e.g.
+    # a remote backend whose only installed models all lack tool support).
+    if not supports_tool_calling(chosen):
+        ui.print_warning(
+            f"'{chosen}' is known not to support structured tool calling — "
+            "file/git/assistant tools will silently do nothing or error. Install a "
+            "tool-capable model (e.g. `ollama pull qwen3.5` or a llama3.1+ model) on "
+            "whichever Ollama instance is actually handling requests, or use `lydia "
+            "ask` without --yes for plain Q&A."
+        )
+    return chosen
 
 
 def run_chat(config: LydiaConfig) -> int:
