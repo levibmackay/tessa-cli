@@ -1,11 +1,14 @@
 """Generate and store Lydia's daily personal briefing.
 
-Drives the same agent loop the coding REPL uses (`agent/loop.py::run_agent_turn`),
-but with only the personal-assistant tools in scope and a dedicated system
-prompt (`agent/prompts.py::BRIEFING_SYSTEM_PROMPT`) — composing over
-heterogeneous sources (email, assignments, market data, headlines) benefits
-from the same LLM-driven prioritization the coding agent already does,
-rather than a bespoke deterministic template.
+Sources are fetched deterministically (directly calling each check_* tool
+handler in agent/tools.py) rather than letting the model decide which tools
+to call: live testing showed the model would sometimes skip a tool and just
+fabricate plausible-looking content for that source instead (e.g. inventing
+an Outlook email even when Outlook wasn't connected at all). Pre-fetching
+every source removes that failure mode entirely — the model's only job is
+to synthesize a checklist from data it's already been handed, with a system
+prompt (`agent/prompts.py::BRIEFING_SYSTEM_PROMPT`) telling it not to add
+anything beyond that.
 """
 
 from __future__ import annotations
@@ -17,21 +20,27 @@ from pathlib import Path
 
 from rich.markdown import Markdown
 
-from lydia.agent.loop import run_agent_turn
 from lydia.agent.prompts import BRIEFING_SYSTEM_PROMPT
-from lydia.agent.tools import ToolContext, ToolSpec, build_registry
+from lydia.agent.tools import ToolContext, _check_canvas, _check_email, _check_news, _check_stocks
 from lydia.cli import ui
 from lydia.config.settings import GLOBAL_DIR, LydiaConfig
 from lydia.llm.client import OllamaError
 from lydia.llm.factory import build_client
 from lydia.llm.types import Message
 
-ASSISTANT_TOOL_NAMES = {"check_email", "check_canvas", "check_stocks", "check_news"}
 BRIEFING_FILE = GLOBAL_DIR / "briefing.json"
 
 
-def _assistant_registry() -> list[ToolSpec]:
-    return [spec for spec in build_registry() if spec.name in ASSISTANT_TOOL_NAMES]
+def _gather_sources(ctx: ToolContext) -> str:
+    """Call every source directly and return their raw results as labeled sections."""
+    sections = [
+        ("Canvas", _check_canvas({}, ctx)),
+        ("Personal email (Gmail)", _check_email({"account": "personal"}, ctx)),
+        ("School email (Outlook)", _check_email({"account": "school"}, ctx)),
+        ("Stock market", _check_stocks({}, ctx)),
+        ("AI news", _check_news({}, ctx)),
+    ]
+    return "\n\n".join(f"## {label}\n{result.content}" for label, result in sections)
 
 
 def _save_briefing(text: str) -> None:
@@ -71,16 +80,21 @@ def run_briefing(config: LydiaConfig, notify: bool = False, _client_factory=buil
             return 1
 
         ctx = ToolContext(root=Path.home(), config=config, confirm=ui.auto_confirm, client=client)
-        messages = [Message(role="user", content="Give me today's briefing.")]
+        source_data = _gather_sources(ctx)
+        messages = [Message(
+            role="user",
+            content=(
+                "Here is today's raw data, already fetched from each source below. "
+                "Compose the checklist from exactly this — do not invent anything "
+                "beyond what's given, and don't ask to call any tools.\n\n" + source_data
+            ),
+        )]
         try:
-            text, _ = run_agent_turn(
-                client=client, model=model, temperature=config.temperature,
-                num_ctx=config.num_ctx, think=config.think_flag, keep_alive=config.keep_alive,
-                system_prompt=BRIEFING_SYSTEM_PROMPT, messages=messages,
-                registry=_assistant_registry(), ctx=ctx,
-                stream_fn=ui.stream_agent_response,
-                on_tool_call=ui.print_tool_call, on_tool_result=ui.print_tool_result,
-            )
+            text, _ = ui.stream_response(client.chat_stream(
+                model=model, messages=[Message(role="system", content=BRIEFING_SYSTEM_PROMPT), *messages],
+                temperature=config.temperature, num_ctx=config.num_ctx,
+                think=config.think_flag, keep_alive=config.keep_alive,
+            ))
         except OllamaError as exc:
             ui.print_error(str(exc))
             return 1

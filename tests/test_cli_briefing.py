@@ -5,10 +5,11 @@ from pathlib import Path
 import pytest
 from typer.testing import CliRunner
 
+from lydia.agent.tools import ToolContext
 from lydia.cli import briefing
 from lydia.cli.main import app
 from lydia.config.settings import LydiaConfig
-from lydia.llm.types import ChatChunk, ModelInfo, ToolCall
+from lydia.llm.types import ChatChunk, ModelInfo
 
 runner = CliRunner()
 
@@ -53,9 +54,29 @@ def isolated_briefing_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> P
     return fake_file
 
 
-def test_assistant_registry_only_has_assistant_tools() -> None:
-    names = {spec.name for spec in briefing._assistant_registry()}
-    assert names == {"check_email", "check_canvas", "check_stocks", "check_news"}
+def test_gather_sources_includes_all_five_sections(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import lydia.connectors.news as news_mod
+    import lydia.connectors.stocks as stocks_mod
+
+    monkeypatch.setattr(stocks_mod, "get_market_summary", lambda: [
+        stocks_mod.IndexSnapshot(symbol="^GSPC", name="S&P 500", price=100.0, change_pct=0.5),
+    ])
+    monkeypatch.setattr(news_mod, "get_ai_news", lambda: [
+        news_mod.NewsItem(title="AI thing", link="http://x", source="Test", published=""),
+    ])
+
+    ctx = ToolContext(root=tmp_path, config=LydiaConfig(), confirm=lambda req: True)
+    data = briefing._gather_sources(ctx)
+    assert "## Canvas" in data
+    assert "## Personal email (Gmail)" in data
+    assert "## School email (Outlook)" in data
+    assert "## Stock market" in data
+    assert "S&P 500" in data
+    assert "## AI news" in data
+    assert "AI thing" in data
+    # Neither account is logged in in this test — the gathered data should
+    # say so rather than silently omitting the section.
+    assert "not logged in" in data.lower() or "auth login" in data.lower()
 
 
 def test_save_and_load_briefing_roundtrip() -> None:
@@ -73,18 +94,21 @@ def test_run_briefing_unreachable_backend_returns_error() -> None:
     assert briefing.load_briefing() is None
 
 
-def test_run_briefing_calls_tools_and_saves_result(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_run_briefing_synthesizes_from_gathered_sources_and_saves_result(monkeypatch: pytest.MonkeyPatch) -> None:
+    import lydia.connectors.news as news_mod
     import lydia.connectors.stocks as stocks_mod
 
-    fake_snapshot = [stocks_mod.IndexSnapshot(symbol="^GSPC", name="S&P 500", price=100.0, change_pct=0.5)]
-    monkeypatch.setattr(stocks_mod, "get_market_summary", lambda: fake_snapshot)
-
-    client = _FakeClient([
-        [ChatChunk(tool_calls=[ToolCall(name="check_stocks", arguments={})], done=True)],
-        [ChatChunk(content="- Market: S&P 500 up 0.5%.", done=True)],
+    monkeypatch.setattr(stocks_mod, "get_market_summary", lambda: [
+        stocks_mod.IndexSnapshot(symbol="^GSPC", name="S&P 500", price=100.0, change_pct=0.5),
     ])
+    monkeypatch.setattr(news_mod, "get_ai_news", lambda: [])
+
+    # A single non-tool completion call now — no tool_calls involved.
+    client = _FakeClient([[ChatChunk(content="- Market: S&P 500 up 0.5%.", done=True)]])
     exit_code = briefing.run_briefing(LydiaConfig(), _client_factory=lambda config: client)
     assert exit_code == 0
+    assert len(client.calls) == 1
+    assert client.calls[0].get("tools") in (None, [])  # no tools offered this turn
     saved = briefing.load_briefing()
     assert saved is not None
     assert "S&P 500" in saved["text"]

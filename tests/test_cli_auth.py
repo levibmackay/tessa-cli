@@ -35,7 +35,15 @@ def test_login_canvas_stores_base_url_and_token() -> None:
     assert secrets.get_secret(secrets.CANVAS_TOKEN) == "tok-123"
 
 
-def test_login_gmail_without_client_secret_file_fails() -> None:
+def test_login_gmail_without_client_secret_file_fails(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    # DEFAULT_CLIENT_SECRET_PATH is baked into login()'s default argument at
+    # module-import time, so patching settings.GLOBAL_DIR alone (see
+    # isolated_cwd above) doesn't affect it — patch the bound default
+    # directly so this test can't depend on (or collide with) a real
+    # ~/.lydia/gmail_client_secret.json on the machine running it.
+    from lydia.connectors.auth import gmail_oauth
+    monkeypatch.setattr(gmail_oauth.login, "__defaults__", (tmp_path / "does_not_exist.json",))
+
     result = runner.invoke(app, ["auth", "login", "gmail"])
     assert result.exit_code == 1
     assert "error" in result.stdout.lower()
