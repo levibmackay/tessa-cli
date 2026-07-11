@@ -34,8 +34,11 @@ class LydiaConfig:
     # Reasoning for thinking-capable models (qwen3, deepseek-r1):
     # auto = model default, on/off = force. "off" gives much faster replies.
     think: str = "auto"
-    # Permission mode for run_command: ask | auto | deny (see tools/terminal.py)
-    permission_mode: str = "ask"
+    # Session mode: ask (confirm every mutating action), auto (skip
+    # confirmation for routine/non-dangerous actions), plan (research only —
+    # mutating tools aren't even offered to the model). See
+    # agent/tools.py::filter_for_mode and _confirm_or_auto.
+    mode: str = "ask"
     # How long Ollama keeps the model loaded in memory after a request, so a
     # session doesn't pay the multi-second reload cost on every message.
     # Ollama duration string ("30m", "1h") or "-1" to never unload.

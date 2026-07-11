@@ -7,10 +7,21 @@ that into a message the model can read and react to.
 
 Risk levels:
     safe    — runs immediately, no confirmation (reads, git status/diff/add)
-    confirm — always shown to the user for a yes/no before running
-              (file writes/deletes, git commit, git push)
-    command — arbitrary shell; policy decided by config.permission_mode
-              combined with lydia.tools.terminal.classify_command
+    confirm — shown to the user for a yes/no before running (file writes/
+              edits/deletes, git commit, git push) — unless config.mode is
+              "auto" and the request isn't flagged dangerous, see
+              _confirm_or_auto.
+    command — arbitrary shell; policy decided by config.mode combined with
+              lydia.tools.terminal.classify_command
+
+Session modes (config.mode, see config/settings.py):
+    ask   — confirm every confirm/command-tier action (today's default).
+    auto  — skip confirmation for non-dangerous actions; still confirm
+            anything flagged dangerous (delete_file, git_push, a
+            classify_command-flagged-dangerous shell command).
+    plan  — research only: filter_for_mode strips every mutating tool
+            (MUTATING_TOOL_NAMES) out of the registry entirely, so the
+            model can't call them at all, regardless of confirmation.
 """
 
 from __future__ import annotations
@@ -95,6 +106,13 @@ def _declined(what: str) -> ToolResult:
     )
 
 
+def _confirm_or_auto(ctx: ToolContext, request: ConfirmRequest) -> bool:
+    """Skip the confirmation prompt in auto mode, unless the request is flagged dangerous."""
+    if ctx.config.mode == "auto" and not request.danger:
+        return True
+    return ctx.confirm(request)
+
+
 # -- filesystem ---------------------------------------------------------
 
 
@@ -140,16 +158,28 @@ def _write_file(args: dict, ctx: ToolContext) -> ToolResult:
     path, content = args["path"], args["content"]
     proposal = filesystem.propose_write(ctx.root, path, content)
     verb = "Create" if proposal.is_new_file else "Update"
-    approved = ctx.confirm(ConfirmRequest(title=f"{verb} {path}", detail=proposal.diff))
+    approved = _confirm_or_auto(ctx, ConfirmRequest(title=f"{verb} {path}", detail=proposal.diff))
     if not approved:
         return _declined(f"writing {path}")
     message = filesystem.apply_write(ctx.root, proposal)
     return ToolResult(ok=True, content=message, summary=message)
 
 
+def _edit_file(args: dict, ctx: ToolContext) -> ToolResult:
+    path = args["path"]
+    proposal = filesystem.propose_edit(
+        ctx.root, path, args["old_string"], args["new_string"], args.get("replace_all", False),
+    )
+    approved = _confirm_or_auto(ctx, ConfirmRequest(title=f"Edit {path}", detail=proposal.diff))
+    if not approved:
+        return _declined(f"editing {path}")
+    message = filesystem.apply_write(ctx.root, proposal)
+    return ToolResult(ok=True, content=message, summary=message)
+
+
 def _delete_file(args: dict, ctx: ToolContext) -> ToolResult:
     path = args["path"]
-    approved = ctx.confirm(ConfirmRequest(
+    approved = _confirm_or_auto(ctx, ConfirmRequest(
         title=f"Delete {path}",
         detail=f"This will permanently delete {path} (a backup is kept in .lydia/backups/).",
         danger=True,
@@ -166,15 +196,7 @@ def _delete_file(args: dict, ctx: ToolContext) -> ToolResult:
 def _run_command(args: dict, ctx: ToolContext) -> ToolResult:
     command = args["command"]
     risk = classify_command(command)
-    mode = ctx.config.permission_mode
-    if mode == "deny":
-        return ToolResult(
-            ok=False,
-            content="Command execution is disabled (permission_mode=deny). "
-            "Tell the user what you'd like to run and let them run it themselves.",
-            summary="blocked by permission_mode=deny",
-        )
-    needs_confirm = mode == "ask" or risk == "dangerous"
+    needs_confirm = ctx.config.mode == "ask" or risk == "dangerous"
     if needs_confirm:
         approved = ctx.confirm(ConfirmRequest(
             title=f"Run: {command}",
@@ -212,7 +234,7 @@ def _git_add(args: dict, ctx: ToolContext) -> ToolResult:
 
 def _git_commit(args: dict, ctx: ToolContext) -> ToolResult:
     message = args["message"]
-    approved = ctx.confirm(ConfirmRequest(title="Commit", detail=message))
+    approved = _confirm_or_auto(ctx, ConfirmRequest(title="Commit", detail=message))
     if not approved:
         return _declined("creating this commit")
     result = git.commit(ctx.root, message)
@@ -222,7 +244,7 @@ def _git_commit(args: dict, ctx: ToolContext) -> ToolResult:
 def _git_push(args: dict, ctx: ToolContext) -> ToolResult:
     remote, branch = args.get("remote", "origin"), args.get("branch")
     label = f"{remote}/{branch}" if branch else remote
-    approved = ctx.confirm(ConfirmRequest(
+    approved = _confirm_or_auto(ctx, ConfirmRequest(
         title=f"Push to {label}",
         detail=f"This pushes local commits to {label}, a shared/remote location.",
         danger=True,
@@ -327,6 +349,20 @@ def _check_news(args: dict, ctx: ToolContext) -> ToolResult:
     return ToolResult(ok=True, content=format_news(items), summary=f"checked AI news ({len(items)} headlines)")
 
 
+# Tools that change something on disk or in git. Plan mode strips exactly
+# these out of the registry, regardless of risk tier — git_add is "safe"
+# risk (no confirmation needed) but still mutates the index, so risk tier
+# alone isn't the right signal for "should this even be offered in plan mode."
+MUTATING_TOOL_NAMES = {"write_file", "edit_file", "delete_file", "run_command", "git_add", "git_commit", "git_push"}
+
+
+def filter_for_mode(registry: list[ToolSpec], mode: str) -> list[ToolSpec]:
+    """The tools actually offered to the model this turn, given the session mode."""
+    if mode == "plan":
+        return [spec for spec in registry if spec.name not in MUTATING_TOOL_NAMES]
+    return registry
+
+
 def build_registry() -> list[ToolSpec]:
     return [
         ToolSpec(
@@ -383,7 +419,9 @@ def build_registry() -> list[ToolSpec]:
         ToolSpec(
             "write_file",
             "Create a new file or overwrite an existing one with full new content. "
-            "Always shows a diff and asks the user to approve before writing.",
+            "Prefer edit_file for a targeted change to an existing file — use write_file "
+            "for new files or full-file rewrites. Always shows a diff and asks the user "
+            "to approve before writing (unless mode is auto).",
             {
                 "type": "object",
                 "properties": {
@@ -393,6 +431,28 @@ def build_registry() -> list[ToolSpec]:
                 "required": ["path", "content"],
             },
             "confirm", _write_file,
+        ),
+        ToolSpec(
+            "edit_file",
+            "Replace an exact snippet of text in an existing file with new text — the "
+            "preferred way to make a targeted change without rewriting the whole file. "
+            "old_string must match the file's current content exactly and must be unique "
+            "within the file unless replace_all is set. Always shows a diff and asks the "
+            "user to approve before writing (unless mode is auto).",
+            {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "Path relative to the project root"},
+                    "old_string": {"type": "string", "description": "The exact existing text to replace"},
+                    "new_string": {"type": "string", "description": "The text to replace it with"},
+                    "replace_all": {
+                        "type": "boolean",
+                        "description": "Replace every occurrence of old_string instead of requiring exactly one",
+                    },
+                },
+                "required": ["path", "old_string", "new_string"],
+            },
+            "confirm", _edit_file,
         ),
         ToolSpec(
             "delete_file", "Permanently delete a file (a backup is kept). Asks the user to approve first.",

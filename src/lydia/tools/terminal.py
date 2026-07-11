@@ -1,8 +1,8 @@
 """Command execution with a dangerous-command classifier.
 
 This module only classifies and runs commands — it has no opinion on
-*whether* to ask the user first. That policy (permission_mode: auto / ask /
-deny) lives in the agent loop, which is the single place that decides
+*whether* to ask the user first. That policy (session mode: ask / auto /
+plan) lives in the agent loop, which is the single place that decides
 whether to prompt, using `classify_command` as input.
 """
 

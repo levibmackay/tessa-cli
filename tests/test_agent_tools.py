@@ -1,19 +1,20 @@
-"""Tests for the tool registry's confirmation and permission behaviour."""
+"""Tests for the tool registry's confirmation and mode behaviour."""
 
 from pathlib import Path
 
 import pytest
 
-from lydia.agent.tools import ToolContext, build_registry
+from lydia.agent.tools import MUTATING_TOOL_NAMES, ToolContext, build_registry, filter_for_mode
 from lydia.config.settings import LydiaConfig
+from lydia.tools.filesystem import ToolError
 
 
 def get(name: str):
     return next(t for t in build_registry() if t.name == name)
 
 
-def ctx(tmp_path: Path, confirm_result: bool = True, permission_mode: str = "ask") -> ToolContext:
-    config = LydiaConfig(permission_mode=permission_mode)
+def ctx(tmp_path: Path, confirm_result: bool = True, mode: str = "ask") -> ToolContext:
+    config = LydiaConfig(mode=mode)
     return ToolContext(root=tmp_path, config=config, confirm=lambda req: confirm_result)
 
 
@@ -46,23 +47,11 @@ def test_delete_file_declined_keeps_file(tmp_path: Path) -> None:
     assert (tmp_path / "a.py").exists()
 
 
-def test_run_command_deny_mode_never_executes(tmp_path: Path) -> None:
-    calls = []
-    context = ToolContext(
-        root=tmp_path,
-        config=LydiaConfig(permission_mode="deny"),
-        confirm=lambda req: calls.append(req) or True,
-    )
-    result = get("run_command").handler({"command": "echo hi"}, context)
-    assert not result.ok
-    assert calls == []  # never even asked
-
-
 def test_run_command_auto_mode_runs_safe_without_confirm(tmp_path: Path) -> None:
     asked = []
     context = ToolContext(
         root=tmp_path,
-        config=LydiaConfig(permission_mode="auto"),
+        config=LydiaConfig(mode="auto"),
         confirm=lambda req: asked.append(req) or True,
     )
     result = get("run_command").handler({"command": "echo hi"}, context)
@@ -74,7 +63,7 @@ def test_run_command_auto_mode_still_confirms_dangerous(tmp_path: Path) -> None:
     asked = []
     context = ToolContext(
         root=tmp_path,
-        config=LydiaConfig(permission_mode="auto"),
+        config=LydiaConfig(mode="auto"),
         confirm=lambda req: asked.append(req) or True,
     )
     get("run_command").handler({"command": "rm -rf ./build"}, context)
@@ -86,7 +75,7 @@ def test_run_command_ask_mode_confirms_even_safe_commands(tmp_path: Path) -> Non
     asked = []
     context = ToolContext(
         root=tmp_path,
-        config=LydiaConfig(permission_mode="ask"),
+        config=LydiaConfig(mode="ask"),
         confirm=lambda req: asked.append(req) or True,
     )
     get("run_command").handler({"command": "echo hi"}, context)
@@ -141,3 +130,124 @@ def test_git_commit_requires_confirmation(tmp_path: Path) -> None:
 
     approved = get("git_commit").handler({"message": "add a"}, ctx(tmp_path, confirm_result=True))
     assert approved.ok
+
+
+# -- edit_file ----------------------------------------------------------
+
+
+def test_edit_file_declined_does_not_touch_disk(tmp_path: Path) -> None:
+    (tmp_path / "a.py").write_text("x = 1\n")
+    result = get("edit_file").handler(
+        {"path": "a.py", "old_string": "x = 1", "new_string": "x = 2"}, ctx(tmp_path, confirm_result=False)
+    )
+    assert not result.ok
+    assert (tmp_path / "a.py").read_text() == "x = 1\n"
+
+
+def test_edit_file_approved_writes_to_disk(tmp_path: Path) -> None:
+    (tmp_path / "a.py").write_text("x = 1\n")
+    result = get("edit_file").handler(
+        {"path": "a.py", "old_string": "x = 1", "new_string": "x = 2"}, ctx(tmp_path, confirm_result=True)
+    )
+    assert result.ok
+    assert (tmp_path / "a.py").read_text() == "x = 2\n"
+
+
+def test_edit_file_not_found_reports_error(tmp_path: Path) -> None:
+    # propose_edit raises ToolError directly; like read_file/write_file,
+    # _edit_file doesn't catch it itself — that's execute_tool's job in the
+    # real agent loop (see agent/loop.py::execute_tool).
+    (tmp_path / "a.py").write_text("hello\n")
+    with pytest.raises(ToolError, match="not found"):
+        get("edit_file").handler({"path": "a.py", "old_string": "goodbye", "new_string": "hi"}, ctx(tmp_path))
+
+
+def test_edit_file_not_unique_without_replace_all_reports_error(tmp_path: Path) -> None:
+    (tmp_path / "a.py").write_text("x = 1\nx = 1\n")
+    with pytest.raises(ToolError, match="unique"):
+        get("edit_file").handler({"path": "a.py", "old_string": "x = 1", "new_string": "x = 2"}, ctx(tmp_path))
+
+
+def test_edit_file_replace_all(tmp_path: Path) -> None:
+    (tmp_path / "a.py").write_text("x = 1\nx = 1\n")
+    result = get("edit_file").handler(
+        {"path": "a.py", "old_string": "x = 1", "new_string": "x = 2", "replace_all": True},
+        ctx(tmp_path, confirm_result=True),
+    )
+    assert result.ok
+    assert (tmp_path / "a.py").read_text() == "x = 2\nx = 2\n"
+
+
+# -- auto mode: skip confirm unless dangerous ----------------------------
+
+
+def test_write_file_auto_mode_skips_confirm(tmp_path: Path) -> None:
+    asked = []
+    context = ToolContext(root=tmp_path, config=LydiaConfig(mode="auto"), confirm=lambda req: asked.append(req) or True)
+    result = get("write_file").handler({"path": "new.py", "content": "x\n"}, context)
+    assert result.ok
+    assert asked == []
+
+
+def test_edit_file_auto_mode_skips_confirm(tmp_path: Path) -> None:
+    (tmp_path / "a.py").write_text("x = 1\n")
+    asked = []
+    context = ToolContext(root=tmp_path, config=LydiaConfig(mode="auto"), confirm=lambda req: asked.append(req) or True)
+    result = get("edit_file").handler({"path": "a.py", "old_string": "x = 1", "new_string": "x = 2"}, context)
+    assert result.ok
+    assert asked == []
+
+
+def test_delete_file_auto_mode_still_confirms(tmp_path: Path) -> None:
+    (tmp_path / "a.py").write_text("x\n")
+    asked = []
+    context = ToolContext(root=tmp_path, config=LydiaConfig(mode="auto"), confirm=lambda req: asked.append(req) or True)
+    get("delete_file").handler({"path": "a.py"}, context)
+    assert len(asked) == 1
+    assert asked[0].danger is True
+
+
+def test_git_commit_auto_mode_skips_confirm(tmp_path: Path) -> None:
+    import subprocess
+
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "user.email", "t@example.com"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "user.name", "T"], cwd=tmp_path, check=True)
+    (tmp_path / "a.txt").write_text("hi\n")
+    get("git_add").handler({"paths": ["a.txt"]}, ctx(tmp_path))
+
+    asked = []
+    context = ToolContext(root=tmp_path, config=LydiaConfig(mode="auto"), confirm=lambda req: asked.append(req) or True)
+    result = get("git_commit").handler({"message": "add a"}, context)
+    assert result.ok
+    assert asked == []
+
+
+def test_git_push_auto_mode_still_confirms(tmp_path: Path) -> None:
+    # Decline so the handler never actually tries git.push (no remote exists
+    # in this tmp_path repo) — the point of this test is only that the
+    # confirmation was asked for at all, with danger=True, despite auto mode.
+    asked = []
+    context = ToolContext(root=tmp_path, config=LydiaConfig(mode="auto"), confirm=lambda req: asked.append(req) or False)
+    get("git_push").handler({}, context)
+    assert len(asked) == 1
+    assert asked[0].danger is True
+
+
+# -- plan mode: mutating tools not offered at all ------------------------
+
+
+def test_filter_for_mode_excludes_mutating_tools_in_plan_mode() -> None:
+    registry = build_registry()
+    filtered_names = {spec.name for spec in filter_for_mode(registry, "plan")}
+    assert filtered_names.isdisjoint(MUTATING_TOOL_NAMES)
+    assert "read_file" in filtered_names
+    assert "git_status" in filtered_names
+    assert "check_stocks" in filtered_names
+
+
+def test_filter_for_mode_ask_and_auto_keep_everything() -> None:
+    registry = build_registry()
+    all_names = {spec.name for spec in registry}
+    assert {spec.name for spec in filter_for_mode(registry, "ask")} == all_names
+    assert {spec.name for spec in filter_for_mode(registry, "auto")} == all_names

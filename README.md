@@ -146,7 +146,7 @@ Layered JSON config — project overrides global:
 | `num_ctx` | `8192` | Context window size passed to Ollama |
 | `ollama_host` | `http://localhost:11434` | Where the Ollama daemon is listening |
 | `think` | `auto` | `auto`/`on`/`off` — reasoning for thinking models (Qwen3, DeepSeek-R1); `off` is much faster |
-| `permission_mode` | `ask` | `ask`/`auto`/`deny` — whether `run_command` prompts before running safe-looking shell commands (destructive ones always prompt) |
+| `mode` | `ask` | `ask`/`auto`/`plan` — the session's permission mode; see [Agent tools and the safety model](#agent-tools-and-the-safety-model) |
 | `keep_alive` | `30m` | How long Ollama keeps the model loaded after a request; avoids a multi-second reload on your next message. Ollama duration string, or `-1` to never unload |
 | `server_url` | not set | If set, talk to a remote Lydia Server instead of a local Ollama daemon — see [Running Lydia Server](#running-lydia-server-remote-gpu-inference) |
 | `api_key` | not set | Bearer token for `server_url` |
@@ -209,11 +209,31 @@ classified into a risk tier that decides whether it needs your approval:
 |---|---|---|
 | `read_file`, `list_dir`, `search_code` | safe | Runs immediately |
 | `git_status`, `git_diff`, `git_add` | safe | Runs immediately |
-| `write_file`, `delete_file` | confirm | Shows a diff, asks y/n, keeps a backup in `.lydia/backups/` |
+| `write_file`, `edit_file`, `delete_file` | confirm | Shows a diff, asks y/n, keeps a backup in `.lydia/backups/` |
 | `git_commit`, `git_push` | confirm | Shows the message/target, asks y/n |
-| `run_command` | policy | Safe-looking commands follow `permission_mode`; anything matching a destructive pattern always asks, regardless of mode |
+| `run_command` | policy | Safe-looking commands follow the session mode below; anything matching a destructive pattern always asks, regardless of mode |
 | `remember` | safe | Saves a fact to `.lydia/memory.json` so it's known in future sessions |
 | `search_semantic` | safe | Meaning-based search over an embedding index (`lydia index` first); falls back to literal `search_code` if not indexed |
+
+`edit_file` replaces one exact snippet of text within an existing file (like
+Claude Code's own edit tool) — the model doesn't have to reproduce the whole
+file to make a small change. `write_file` is for new files or a genuine
+full-file rewrite.
+
+### Session modes
+
+The current mode governs every confirm/command-tier tool above, and is
+always visible in the prompt (`Lydia (ask) > `):
+
+| Mode | Behavior |
+|---|---|
+| `ask` (default) | Every confirm/command-tier action asks first. |
+| `auto` | Routine actions (edits, commits, safe shell commands) run without asking; anything flagged dangerous (deletes, `git push`, a destructive shell command) still asks. |
+| `plan` | Research only — `write_file`/`edit_file`/`delete_file`/`run_command`/`git_add`/`git_commit`/`git_push` aren't even offered to the model. Ask Lydia to plan something, review what it proposes, then switch modes to let it actually make the changes. |
+
+Switch modes with `/mode plan`/`/mode auto`/`/mode ask` (or just `/mode` to
+see the current one), or press **Shift-Tab** to cycle through them without
+typing. `lydia config set mode auto` changes the default for future sessions.
 
 All file paths are resolved relative to the project root and refused if they
 try to escape it (`..`, absolute paths outside the project) — a confused or

@@ -9,6 +9,7 @@ from lydia.tools.filesystem import (
     apply_delete,
     apply_write,
     list_dir,
+    propose_edit,
     propose_write,
     read_file,
     search_code,
@@ -126,3 +127,48 @@ def test_write_blocked_outside_root(tmp_path: Path) -> None:
 
     with pytest.raises(PathEscapesProjectError):
         propose_write(tmp_path, "../escape.py", "x")
+
+
+def test_propose_edit_replaces_unique_match(tmp_path: Path) -> None:
+    (tmp_path / "a.py").write_text("def foo():\n    return 1\n")
+    proposal = propose_edit(tmp_path, "a.py", "return 1", "return 2")
+    assert proposal.is_new_file is False
+    assert proposal.new_content == "def foo():\n    return 2\n"
+    assert "-    return 1" in proposal.diff
+    assert "+    return 2" in proposal.diff
+
+
+def test_propose_edit_missing_file_raises(tmp_path: Path) -> None:
+    with pytest.raises(ToolError):
+        propose_edit(tmp_path, "nope.py", "x", "y")
+
+
+def test_propose_edit_not_found_raises(tmp_path: Path) -> None:
+    (tmp_path / "a.py").write_text("hello\n")
+    with pytest.raises(ToolError):
+        propose_edit(tmp_path, "a.py", "goodbye", "hi")
+
+
+def test_propose_edit_not_unique_without_replace_all_raises(tmp_path: Path) -> None:
+    (tmp_path / "a.py").write_text("x = 1\nx = 1\n")
+    with pytest.raises(ToolError):
+        propose_edit(tmp_path, "a.py", "x = 1", "x = 2")
+
+
+def test_propose_edit_replace_all_replaces_every_occurrence(tmp_path: Path) -> None:
+    (tmp_path / "a.py").write_text("x = 1\nx = 1\n")
+    proposal = propose_edit(tmp_path, "a.py", "x = 1", "x = 2", replace_all=True)
+    assert proposal.new_content == "x = 2\nx = 2\n"
+
+
+def test_propose_edit_identical_strings_raises(tmp_path: Path) -> None:
+    (tmp_path / "a.py").write_text("same\n")
+    with pytest.raises(ToolError):
+        propose_edit(tmp_path, "a.py", "same", "same")
+
+
+def test_propose_edit_blocked_outside_root(tmp_path: Path) -> None:
+    from lydia.tools.paths import PathEscapesProjectError
+
+    with pytest.raises(PathEscapesProjectError):
+        propose_edit(tmp_path, "../escape.py", "x", "y")

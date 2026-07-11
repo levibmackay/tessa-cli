@@ -115,22 +115,55 @@ def _walk_files(directory: Path):
                 yield entry
 
 
-def propose_write(root: Path, path: str, content: str) -> WriteProposal:
-    """Build a diff for a create-or-modify without touching disk."""
-    target = resolve_within(root, path)
-    is_new = not target.exists()
-    old_content = None if is_new else target.read_text(encoding="utf-8", errors="replace")
+def _unified_diff(old_content: str | None, new_content: str, path: str, is_new: bool) -> str:
     diff = "".join(
         difflib.unified_diff(
             (old_content.splitlines(keepends=True) if old_content is not None else []),
-            content.splitlines(keepends=True),
+            new_content.splitlines(keepends=True),
             fromfile=f"a/{path}" if not is_new else "/dev/null",
             tofile=f"b/{path}",
         )
     )
     if not diff and not is_new:
         diff = "(no changes — file content is identical)"
+    return diff
+
+
+def propose_write(root: Path, path: str, content: str) -> WriteProposal:
+    """Build a diff for a create-or-modify without touching disk."""
+    target = resolve_within(root, path)
+    is_new = not target.exists()
+    old_content = None if is_new else target.read_text(encoding="utf-8", errors="replace")
+    diff = _unified_diff(old_content, content, path, is_new)
     return WriteProposal(path=path, diff=diff, is_new_file=is_new, old_content=old_content, new_content=content)
+
+
+def propose_edit(root: Path, path: str, old_string: str, new_string: str, replace_all: bool = False) -> WriteProposal:
+    """Build a diff for a targeted find/replace within an existing file, without touching disk.
+
+    Unlike propose_write, this never creates a file — it only edits one
+    that already exists, and requires old_string to appear exactly once
+    unless replace_all is set, so the model can't accidentally rewrite the
+    wrong occurrence (or all of them) without saying so.
+    """
+    target = resolve_within(root, path)
+    if not target.is_file():
+        raise ToolError(f"No such file: {path}")
+    old_content = target.read_text(encoding="utf-8", errors="replace")
+    if old_string == new_string:
+        raise ToolError("old_string and new_string are identical — no change to make.")
+    count = old_content.count(old_string)
+    if count == 0:
+        raise ToolError(f"old_string not found in {path}. Re-read the file and match the text exactly.")
+    if count > 1 and not replace_all:
+        raise ToolError(
+            f"old_string appears {count} times in {path}; it must be unique. "
+            "Add more surrounding context to pin down one occurrence, or pass replace_all=true "
+            "to replace every occurrence."
+        )
+    new_content = old_content.replace(old_string, new_string)
+    diff = _unified_diff(old_content, new_content, path, is_new=False)
+    return WriteProposal(path=path, diff=diff, is_new_file=False, old_content=old_content, new_content=new_content)
 
 
 def apply_write(root: Path, proposal: WriteProposal) -> str:
