@@ -37,19 +37,32 @@ def _gradient_color(fraction: float) -> str:
     return f"#{r:02x}{g:02x}{b:02x}"
 
 
-def render_logo() -> Text | None:
-    """Big gradient LYDIA wordmark, or None if the terminal is too narrow."""
-    art = pyfiglet.figlet_format("LYDIA", font="ansi_shadow").rstrip("\n")
-    lines = art.split("\n")
-    width = max((len(line) for line in lines), default=0)
-    if width == 0 or console.width < width:
-        return None
-    logo = Text()
+def _scale_lines(lines: list[str], factor: int) -> list[str]:
+    """Blow up ASCII art by repeating each character factor-x horizontally and each row factor-x vertically."""
+    if factor == 1:
+        return lines
+    scaled: list[str] = []
     for line in lines:
-        for x, char in enumerate(line):
-            logo.append(char, style=_gradient_color(x / max(width - 1, 1)) if char != " " else "")
-        logo.append("\n")
-    return logo
+        wide = "".join(char * factor for char in line)
+        scaled.extend([wide] * factor)
+    return scaled
+
+
+def render_logo() -> Text | None:
+    """Big gradient LYDIA wordmark, scaled up as much as the terminal allows, or None if too narrow even at 1x."""
+    art = pyfiglet.figlet_format("LYDIA", font="ansi_shadow").rstrip("\n")
+    base_lines = art.split("\n")
+    for scale in (2, 1):
+        lines = _scale_lines(base_lines, scale)
+        width = max((len(line) for line in lines), default=0)
+        if width and console.width >= width:
+            logo = Text()
+            for line in lines:
+                for x, char in enumerate(line):
+                    logo.append(char, style=_gradient_color(x / max(width - 1, 1)) if char != " " else "")
+                logo.append("\n")
+            return logo
+    return None
 
 
 def print_banner(model: str, project_kind: str | None = None) -> None:
