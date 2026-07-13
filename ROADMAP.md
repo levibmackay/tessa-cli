@@ -63,13 +63,22 @@ context — each one names the files to touch and what "done" looks like.
   real Ollama daemon" in `CLAUDE.md` for how those get verified instead.
 - **Cross-platform audit.** Checked (not run): grepped the source for
   hardcoded macOS paths, unix-only path joins, and `os.name`/`sys.platform`
-  branches — none found; everything routes through `pathlib`. The one
-  real, unavoidable limitation: `tools/terminal.py::run_command` uses
-  `subprocess.run(..., shell=True)`, which invokes `cmd.exe` on Windows,
-  not bash — so unix-style commands a model generates (`ls`, `grep`,
-  `rm -rf`) won't translate as-is. This has never actually been run on
-  Windows or Linux; "checked via static analysis" is not the same claim
-  as "tested," and the distinction matters if you're about to rely on it.
+  branches — none found beyond `cli/scheduler.py`; everything else routes
+  through `pathlib`. The one real, unavoidable limitation:
+  `tools/terminal.py::run_command` uses `subprocess.run(..., shell=True)`,
+  which invokes `cmd.exe` on Windows, not bash — so unix-style commands a
+  model generates (`ls`, `grep`, `rm -rf`) won't translate as-is. This has
+  never actually been run on Windows or Linux; "checked via static
+  analysis" is not the same claim as "tested," and the distinction matters
+  if you're about to rely on it.
+- **Cross-platform scheduled briefings.** `cli/scheduler.py` was macOS-only
+  (`launchd`) and crashed with a raw `FileNotFoundError` on any other OS
+  (reported in #1). It now has a Linux backend too (`systemd --user`
+  service + timer, enabled via `systemctl --user`), selected automatically
+  by `platform.system()`; Windows still raises a clear `ScheduleError`
+  instead of a traceback, since neither backend applies there.
+  `--notify`'s desktop notification is still macOS-only (`osascript`) —
+  a `notify-send` equivalent for Linux is a natural follow-up.
 - **Client/server split.** New `server/` package (FastAPI) so Ollama can
   run on a separate, more powerful machine (e.g. a gaming PC with a real
   GPU) while `lydia` keeps running from a laptop with no change in feel.
