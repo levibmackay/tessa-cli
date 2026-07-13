@@ -63,3 +63,21 @@ def test_save_and_coerce(tmp_path: Path) -> None:
 def test_save_rejects_unknown_key(tmp_path: Path) -> None:
     with pytest.raises(KeyError):
         save_config_value("nope", "x", tmp_path / "config.json")
+
+def test_save_rejects_unknown_key(tmp_path: Path) -> None:
+    with pytest.raises(KeyError):
+        save_config_value("nope", "x", tmp_path / "config.json")
+
+
+def test_boolean_coercion(tmp_path: Path) -> None:
+    path = tmp_path / "config.json"
+
+    save_config_value(
+        "briefing_schedule_enabled",
+        coerce_value("briefing_schedule_enabled", "false"),
+        path,
+    )
+
+    data = json.loads(path.read_text())
+
+    assert data["briefing_schedule_enabled"] is False
