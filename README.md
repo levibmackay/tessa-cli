@@ -316,9 +316,14 @@ lydia briefing schedule disable
 `briefing run` fetches every connected source deterministically first, then
 uses the model only to synthesize a prioritized checklist from that real
 data — it never decides on its own whether to check a source, so it can't
-skip one and improvise plausible-looking content instead. A scheduled run
-fires a short macOS notification (`--notify`, via `osascript`, on by default
-when scheduled) with the full checklist saved for `lydia briefing show`.
+skip one and improvise plausible-looking content instead. The full checklist
+is always saved for `lydia briefing show`.
+
+`briefing schedule enable` works on macOS (via `launchd`) and Linux (via a
+`systemd --user` service + timer); it isn't supported on Windows yet. On a
+scheduled run, `--notify` (on by default when scheduled) fires a short
+desktop notification on macOS via `osascript` — Linux scheduling works, but
+the notification itself is macOS-only for now.
 
 ## Memory
 
