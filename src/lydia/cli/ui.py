@@ -48,18 +48,19 @@ _ICON_ROWS: tuple[str, ...] = (
 
 
 def _with_icon(lines: list[str]) -> list[str]:
-    """Prefix each wordmark row with a small block-diamond mark, same heavy-block style as the font."""
+    """Frame each wordmark row with the small block-diamond mark on both sides, same heavy-block style as the font."""
     icon_width = len(_ICON_ROWS[0])
     blank_icon_row = " " * icon_width
-    return [
-        f"{_ICON_ROWS[i] if i < len(_ICON_ROWS) else blank_icon_row}  {line}"
-        for i, line in enumerate(lines)
-    ]
+    result = []
+    for i, line in enumerate(lines):
+        icon = _ICON_ROWS[i] if i < len(_ICON_ROWS) else blank_icon_row
+        result.append(f"{icon}  {line}  {icon}")
+    return result
 
 
 def render_logo() -> Text | None:
-    """Gradient LYDIA wordmark with a small icon to its left, or None if the terminal is too narrow."""
-    art = pyfiglet.figlet_format("LYDIA", font="ansi_shadow").rstrip("\n")
+    """Gradient LYDIA CLI wordmark bookended by a small icon on both sides, or None if the terminal is too narrow."""
+    art = pyfiglet.figlet_format("LYDIA CLI", font="ansi_shadow").rstrip("\n")
     lines = art.split("\n")
     for candidate in (_with_icon(lines), lines):
         width = max((len(line) for line in candidate), default=0)
@@ -78,7 +79,7 @@ def print_banner(model: str, project_kind: str | None = None) -> None:
     if logo is not None:
         console.print(logo)
     else:
-        console.print(Text("LYDIA", style=f"bold {ACCENT}"))
+        console.print(Text("LYDIA CLI", style=f"bold {ACCENT}"))
     subtitle = Text.assemble(
         ("local AI coding agent  ", "dim"),
         (f"v{__version__}", "dim italic"),
