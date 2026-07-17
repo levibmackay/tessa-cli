@@ -67,3 +67,19 @@ def test_lock_blocks_then_goes_stale():
     assert store.try_acquire_lock(now_fn=lambda: 1000.0 + store.LOCK_STALE_SECONDS + 1) is True
     store.release_lock()
     assert store.try_acquire_lock(now_fn=lambda: 2000.0) is True
+
+
+def test_load_rejects_path_traversal():
+    with pytest.raises(AutomationError, match="Invalid automation name"):
+        store.load_automation("../../evil")
+
+
+def test_delete_rejects_path_traversal():
+    with pytest.raises(AutomationError, match="Invalid automation name"):
+        store.delete_automation("../evil")
+
+
+def test_save_rejects_reserved_name():
+    reserved = _auto("state")
+    with pytest.raises(AutomationError, match="reserved name"):
+        store.save_automation(reserved)

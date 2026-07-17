@@ -12,7 +12,7 @@ import time
 from pathlib import Path
 from typing import Any, Callable
 
-from lydia.automations.model import Automation, AutomationError, validate
+from lydia.automations.model import Automation, AutomationError, _NAME_RE, validate
 from lydia.config.settings import GLOBAL_DIR
 
 logger = logging.getLogger(__name__)
@@ -26,6 +26,8 @@ _RESERVED = {"state", "runs"}  # state.json / runs.json live next to recipes
 
 
 def recipe_path(name: str) -> Path:
+    if not _NAME_RE.match(name or ""):
+        raise AutomationError(f"Invalid automation name '{name}'.")
     return AUTOMATIONS_DIR / f"{name}.json"
 
 
