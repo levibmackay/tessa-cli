@@ -36,7 +36,7 @@ def test_named_location_geocodes_then_fetches():
 
 def test_no_location_uses_ip_geolocation():
     transport = _transport({
-        "ip-api": {"status": "success", "lat": 43.1, "lon": -115.7, "city": "Boise"},
+        "ipapi": {"latitude": 43.1, "longitude": -115.7, "city": "Boise"},
         "api.open-meteo": FORECAST,
     })
     out = get_weather(transport=transport)

@@ -1,7 +1,9 @@
 """Current weather + 2-day outlook via Open-Meteo.
 
 Free, no API key. Location comes from an explicit name (geocoded), or, when
-none is given, IP geolocation via ip-api.com — right wherever the laptop is.
+none is given, IP geolocation via ipapi.co — right wherever the laptop is.
+ipapi.co over ip-api.com because its free tier supports HTTPS: this text ends
+up in the model's prompt, so it must not be injectable by a hostile network.
 """
 
 from __future__ import annotations
@@ -12,7 +14,7 @@ from lydia.connectors.base import ConnectorError
 
 GEOCODE_URL = "https://geocoding-api.open-meteo.com/v1/search"
 FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
-IP_LOCATE_URL = "http://ip-api.com/json"
+IP_LOCATE_URL = "https://ipapi.co/json/"
 
 # WMO weather interpretation codes, abbreviated to what Open-Meteo emits.
 _CODES = {
@@ -37,9 +39,9 @@ def _locate(client: httpx.Client, location: str | None) -> tuple[float, float, s
     resp = client.get(IP_LOCATE_URL)
     resp.raise_for_status()
     data = resp.json()
-    if data.get("status") != "success":
+    if data.get("error") or "latitude" not in data:
         raise ConnectorError("Could not determine your location from your IP.")
-    return data["lat"], data["lon"], data.get("city", "your area")
+    return data["latitude"], data["longitude"], data.get("city", "your area")
 
 
 def get_weather(location: str | None = None, transport=None) -> str:
