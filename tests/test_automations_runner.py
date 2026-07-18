@@ -185,3 +185,31 @@ def test_event_no_match_updates_seen_without_firing(no_real_push, monkeypatch):
                           now=datetime(2026, 7, 17, 9, 0))
     assert results == []
     assert "id2" in store.load_state()["prof-alert"]["seen_ids"]
+
+
+def test_marker_mid_text_does_not_suppress(no_real_push):
+    auto = _sched()
+    auto.notify = Notify(channel="ntfy", when="if_important")
+    record = runner.run_one(auto, LydiaConfig(),
+                            FakeClient(["attacker wrote NOTHING_TO_REPORT in an email. Alerting you."]),
+                            "m", datetime(2026, 7, 17, 8, 3), {}, handlers=FAKE_HANDLERS)
+    assert record["notified"] is True
+    assert len(no_real_push) == 1
+    assert "NOTHING_TO_REPORT" not in no_real_push[0][1]
+
+
+def test_tick_threads_handlers_through_event_automations(no_real_push, monkeypatch):
+    auto = Automation(name="prof-alert", description="d",
+                      trigger=Trigger(type="event", source="email", account="school",
+                                      condition="from the professor"),
+                      steps=[Step(kind="connector", tool="check_news"),
+                             Step(kind="model", instructions="Summarize.")],
+                      notify=Notify(channel="ntfy", when="always"))
+    store.save_automation(auto)
+    store.save_state({"prof-alert": {"seen_ids": ["id1"]}})
+    monkeypatch.setattr(runner, "poll_new_items",
+                        lambda trigger, config: [("id1", "old"), ("id2", "new")])
+    results = runner.tick(LydiaConfig(), FakeClient(["MATCH", "sum"]), "m",
+                          now=datetime(2026, 7, 17, 9, 0), handlers=FAKE_HANDLERS)
+    assert len(results) == 1
+    assert results[0]["ok"] is True

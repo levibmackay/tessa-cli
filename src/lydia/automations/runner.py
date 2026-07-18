@@ -116,7 +116,7 @@ def _mac_notify(message: str, subtitle: str) -> None:
 def _notify(auto: Automation, result_text: str) -> bool:
     if auto.notify.channel == "none":
         return False
-    if auto.notify.when == "if_important" and NOTHING_TO_REPORT in result_text:
+    if auto.notify.when == "if_important" and result_text.strip().endswith(NOTHING_TO_REPORT):
         return False
     body = result_text.replace(NOTHING_TO_REPORT, "").strip()[:1000]
     if auto.notify.channel == "ntfy":
@@ -213,7 +213,8 @@ def tick(config: LydiaConfig, client: ModelClient, model: str,
                 continue
             try:
                 if auto.trigger.type == "event":
-                    record = _tick_event(auto, config, client, model, now, state)
+                    record = _tick_event(auto, config, client, model, now, state,
+                                         handlers=handlers)
                 elif is_due(auto, state.get(auto.name, {}), now):
                     record = run_one(auto, config, client, model, now, state,
                                      handlers=handlers)
@@ -231,7 +232,8 @@ def tick(config: LydiaConfig, client: ModelClient, model: str,
 
 
 def _tick_event(auto: Automation, config: LydiaConfig, client: ModelClient,
-                model: str, now: datetime, state: dict) -> dict | None:
+                model: str, now: datetime, state: dict,
+                handlers: dict | None = None) -> dict | None:
     items = poll_new_items(auto.trigger, config)
     entry = state.setdefault(auto.name, {})
     if "seen_ids" not in entry:
@@ -249,4 +251,5 @@ def _tick_event(auto: Automation, config: LydiaConfig, client: ModelClient,
     if not _matches(auto.trigger.condition, new, config, client, model):
         return None
     section = ("new items", "\n".join(f"- {t}" for _i, t in new))
-    return run_one(auto, config, client, model, now, state, extra_sections=[section])
+    return run_one(auto, config, client, model, now, state, extra_sections=[section],
+                   handlers=handlers)
