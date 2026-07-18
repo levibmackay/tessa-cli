@@ -121,6 +121,11 @@ ln -s "$PWD/.venv/bin/lydia" /opt/homebrew/bin/lydia   # or anywhere on your PAT
 | `lydia auth status` / `logout <provider>` | Check or disconnect a connected source |
 | `lydia briefing run` / `show` | Generate/print the daily personal briefing |
 | `lydia briefing schedule enable --time 08:00` / `disable` | Turn the daily scheduled briefing on/off |
+| `lydia automate "..."` | Create an automation from a plain-English description |
+| `lydia automations list` / `show <name>` | List all automations or show one in detail |
+| `lydia automations run <name>` | Execute one automation immediately (ignores its trigger) |
+| `lydia automations enable/disable <name>` | Enable or disable an automation |
+| `lydia automations schedule enable` / `disable` | Turn the automations heartbeat (launchd) on/off |
 
 Inside chat: `/help`, `/mode [plan\|ask\|auto]` (or Shift-Tab), `/model <name>`,
 `/models`, `/new` (fresh conversation), `/remember <fact>`, `/memory`,
@@ -319,6 +324,39 @@ data — it never decides on its own whether to check a source, so it can't
 skip one and improvise plausible-looking content instead. A scheduled run
 fires a short macOS notification (`--notify`, via `osascript`, on by default
 when scheduled) with the full checklist saved for `lydia briefing show`.
+
+## Automations
+
+Create scheduled tasks in plain English and let the model run them on a timer.
+Automations are recipes stored as JSON under `.lydia/automations/`, each with a
+trigger (time-of-day or an event like new email), a step the model takes (like
+"check my email and Canvas and send me a briefing"), and a notification style
+(`always`, `if_important`, or `never`).
+
+```bash
+lydia automate "every morning at 8, check my email and canvas and send me a briefing"
+# Lydia echoes the automation it parsed, you confirm, it saves the recipe.
+
+lydia automations run morning-briefing       # execute immediately (testing)
+lydia automations schedule enable            # turn on the launchd heartbeat
+lydia automations list                       # see all recipes and their last run time
+```
+
+The model runs in a stripped-down mode for automations — only the tasks
+you've defined, no interactive chat — so executions are deterministic and
+(mostly) fast. Notifications go to macOS via `ntfy` (requires `lydia auth login ntfy`
+first), or can be sent to a webhook endpoint if configured. A heartbeat process
+runs every 5 minutes (configurable) to check if any automations are due; it
+catches up on wake from sleep, so you won't miss a scheduled run.
+
+### Limitations
+
+The `if_important` notification filter uses model judgment to decide whether to
+alert you — it reads untrusted content (email bodies, assignment descriptions)
+and makes a filtering decision. A carefully crafted email *could* in principle
+convince the model to suppress or mislabel an alert. Critical alerts should
+use `when: always` instead; for everything else, `if_important` is a useful
+convenience filter that doesn't block important information.
 
 ## Memory
 

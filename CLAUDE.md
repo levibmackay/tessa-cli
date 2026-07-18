@@ -85,18 +85,19 @@ lydia ask "read some_file.py and summarize it" --yes
 Layering, outer to inner — each layer only depends on the ones below it:
 
 ```
-cli/     Typer commands + Rich rendering + prompt_toolkit REPL   (depends on: agent, llm, config, context)
-agent/   orchestration: system prompt, tool registry, the loop   (depends on: llm, tools, config)
-tools/   pure functions that touch the filesystem/shell/git      (depends on: nothing else in lydia)
-llm/     ModelClient protocol + OllamaClient + RemoteClient       (depends on: nothing else in lydia)
-context/ project scanner + semantic index (chunk/embed/search)   (depends on: llm (embeddings), database
+cli/      Typer commands + Rich rendering + prompt_toolkit REPL   (depends on: agent, llm, config, context, automations)
+agent/    orchestration: system prompt, tool registry, the loop   (depends on: llm, tools, config)
+tools/    pure functions that touch the filesystem/shell/git      (depends on: nothing else in lydia)
+llm/      ModelClient protocol + OllamaClient + RemoteClient       (depends on: nothing else in lydia)
+context/  project scanner + semantic index (chunk/embed/search)   (depends on: llm (embeddings), database)
+automations/ scheduled recipes: model execution, storage, heartbeat (depends on: agent, connectors, llm, config)
 database/ SQLite storage for the semantic index                  (depends on: nothing else in lydia)
-config/  layered JSON settings                                   (depends on: nothing else in lydia)
+config/   layered JSON settings                                   (depends on: nothing else in lydia)
 
-server/  (separate package, lydia_server/) — FastAPI inference proxy.
-         Depends on lydia as a library (reuses OllamaClient directly as
-         its provider). Never touches tools/, agent/, or cli/ — tool
-         execution always stays client-side. See server/README.md.
+server/   (separate package, lydia_server/) — FastAPI inference proxy.
+          Depends on lydia as a library (reuses OllamaClient directly as
+          its provider). Never touches tools/, agent/, or cli/ — tool
+          execution always stays client-side. See server/README.md.
 ```
 
 `llm/` is two concrete clients behind one structural interface
@@ -108,6 +109,14 @@ never a concrete class, and is handed whichever one `llm/factory.py::build_clien
 constructs based on `config.server_url`. This is *the* seam that makes
 local-only and client/server usage the same codepath everywhere except one
 factory function.
+
+`automations/` stores JSON recipes (model-parsed from plain English), runs the
+model in a stripped-down mode to execute them on a schedule, and persists
+runtime state. It imports `agent/`, `connectors/`, `llm/`, and `config/`, but
+never `cli/` — this keeps it usable from the server (future) and keeps CLI
+concerns separate from automation concerns. `store.py` holds the single
+`AUTOMATIONS_DIR` constant (`~/.lydia/automations/`), which tests patch for
+hermetic storage without filesystem side effects.
 
 `tools/` must stay UI- and agent-agnostic: every function takes a project
 root and plain arguments and returns plain data or raises `ToolError`. It

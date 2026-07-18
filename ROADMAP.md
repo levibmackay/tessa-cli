@@ -56,6 +56,23 @@ context — each one names the files to touch and what "done" looks like.
   tools/commands flagged dangerous (no human present to approve real
   danger, so it fails safe rather than approving blindly). Plain `lydia
   ask` without `--yes` is unchanged — still tool-free chat.
+- **Automations engine (M5, 2026-07-17).** Plain-English task scheduling: `lydia
+  automate "every morning at 8, check my email and canvas"` parses a natural-
+  language description into a JSON recipe with triggers (time-of-day or events
+  like new email), steps the model runs, and notification styles (`always`,
+  `if_important`, `never`). Recipes live at `.lydia/automations/{name}.json`.
+  A launchd heartbeat (`lydia automations schedule enable`) runs every 5 minutes
+  (configurable) to check if any automations are due; missed ticks on sleep are
+  caught up on wake. Notifications go to macOS via `ntfy` (requires one-time
+  auth setup) or a webhook. The model runs in a stripped-down mode — deterministic,
+  fast, only the tasks you defined. **Local model setup note:** if `server_url`
+  is unset (local Mac Ollama), verify tool-calling support empirically per
+  `CLAUDE.md` before trusting a newly pulled model; not every model that looks
+  like it supports tools actually wires them into Ollama's structured field.
+  **Mac sleep note:** Prevent Mac sleep during scheduled runs to avoid heartbeat
+  delays; a periodic wake signal (e.g. `pmset`) or caffeinate wrapper can ensure
+  timely ticks, but launchd's catch-up on wake still runs missed automations
+  faithfully.
 - **More CLI-level tests.** `tests/test_cli_commands.py` covers `analyze`,
   `init`, `config show/set`, `restore list/apply`, and `--version` via
   `CliRunner`. `ask`/`models`/the chat REPL are deliberately not covered
