@@ -38,4 +38,4 @@ def test_days_out_of_range_clamped():
         seen["script"] = cmd[-1]
         return subprocess.CompletedProcess(cmd, 0, "", "")
     get_events(days=99, runner=run)
-    assert "14 * days" in seen["script"]
+    assert "14 * 86400" in seen["script"]

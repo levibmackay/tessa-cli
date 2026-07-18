@@ -360,9 +360,14 @@ convenience filter that doesn't block important information.
 
 ## Voice mode
 
-An always-listening voice assistant — say "Hey Jarvis" to trigger the model,
-ask a question, and hear a spoken reply. No transcription transcription cloud service;
-Whisper runs locally via `faster_whisper`, and speech synthesis uses `piper`.
+An always-listening voice assistant — say the wake word, ask a question, and
+hear a spoken reply. Fully local: openWakeWord for the wake word, Whisper
+(`faster-whisper`) for transcription, macOS `say` for the voice.
+
+By voice, Lydia can check email, Canvas, your macOS Calendar, weather (free
+Open-Meteo, auto-located), stocks, and news; find and read files; open apps
+and files ("open Spotify"); and send phone notifications. Voice can never
+edit files or run shell commands.
 
 ```bash
 lydia listen                 # start listening in the foreground (Ctrl-C stops)
@@ -373,8 +378,13 @@ lydia listen status          # check if background listening is enabled
 
 **Setup:** The first time you run `lydia listen`, macOS will prompt for
 microphone permission (grant it), and the Whisper model (~150MB) will download
-automatically. Wake word is configurable in `.lydia/config.json`; the default is
-`"Hey Jarvis"` (use underscores for multi-word phrases, e.g. `"Hey_Lydia"`).
+automatically. The first calendar question triggers a one-time Calendar
+automation permission prompt too. Config keys (`lydia config set ...`):
+`voice_wake_word` — an openWakeWord model name (default `hey_jarvis`) or a
+path to a custom-trained `.onnx` model; `voice_model` — a small tool-calling
+model for fast spoken replies (e.g. `qwen3.5:4b`); `voice_tts_voice` — a
+macOS voice name from `say -v '?'`; `weather_location` — fixed place name,
+or leave unset to auto-detect from IP.
 
 `lydia listen enable` runs the assistant as a launchd agent, so it survives
 logout/login and crash restarts. Logs go to `~/.lydia/listen.log`. Note that

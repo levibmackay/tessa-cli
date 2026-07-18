@@ -87,7 +87,7 @@ Layering, outer to inner — each layer only depends on the ones below it:
 ```
 cli/      Typer commands + Rich rendering + prompt_toolkit REPL   (depends on: agent, llm, config, context, automations, voice)
 agent/    orchestration: system prompt, tool registry, the loop   (depends on: llm, tools, config)
-voice/    speech input/output: mic capture, Whisper STT, Piper TTS, wake-word detection (depends on: agent, llm, config)
+voice/    speech input/output: mic capture, Whisper STT, macOS `say` TTS, wake-word detection (depends on: agent, llm, config)
 tools/    pure functions that touch the filesystem/shell/git      (depends on: nothing else in lydia)
 llm/      ModelClient protocol + OllamaClient + RemoteClient       (depends on: nothing else in lydia)
 context/  project scanner + semantic index (chunk/embed/search)   (depends on: llm (embeddings), database)
