@@ -59,6 +59,10 @@ class LydiaConfig:
     canvas_base_url: str | None = None  # e.g. "https://school.instructure.com"
     briefing_schedule_enabled: bool = False
     briefing_schedule_time: str = "08:00"  # HH:MM, 24-hour, local time
+    # Voice mode (see voice/). Wake word is an openWakeWord model name.
+    voice_wake_word: str = "hey_jarvis"
+    voice_stt_model: str = "base.en"
+    voice_tts_voice: str | None = None  # None = system default `say` voice
 
     @property
     def think_flag(self) -> bool | None:
