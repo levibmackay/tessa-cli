@@ -397,3 +397,15 @@ def test_check_weather_uses_config_location(tmp_path, monkeypatch):
     result = agent_tools._check_weather({}, context)
     assert result.ok and "Sunny" in result.content
     assert seen["loc"] == "Mountain Home"
+
+
+# -- calendar tool -------------------------------------------------------
+
+
+def test_check_calendar_tool(tmp_path, monkeypatch):
+    from lydia.agent import tools as agent_tools
+    from lydia.connectors import calendar_mac
+
+    monkeypatch.setattr(calendar_mac, "get_events", lambda days=2, runner=None: f"{days} days: Dentist Tuesday")
+    result = agent_tools._check_calendar({"days": 5}, ctx(tmp_path))
+    assert result.ok and "Dentist" in result.content and "5 days" in result.content

@@ -418,6 +418,15 @@ def _check_weather(args: dict, ctx: ToolContext) -> ToolResult:
         return ToolResult(ok=False, content=str(exc))
 
 
+def _check_calendar(args: dict, ctx: ToolContext) -> ToolResult:
+    from lydia.connectors import calendar_mac
+
+    try:
+        return ToolResult(ok=True, content=calendar_mac.get_events(days=args.get("days", 2)))
+    except ConnectorError as exc:
+        return ToolResult(ok=False, content=str(exc))
+
+
 def _send_notification(args: dict, ctx: ToolContext) -> ToolResult:
     from lydia.config import secrets
     from lydia.connectors import ntfy
@@ -743,5 +752,14 @@ def build_registry() -> list[ToolSpec]:
                 "required": [],
             },
             "safe", _check_weather,
+        ),
+        ToolSpec(
+            "check_calendar", "Upcoming events from the user's macOS Calendar.",
+            {
+                "type": "object",
+                "properties": {"days": {"type": "integer", "description": "How many days ahead to look (1-14, default 2)"}},
+                "required": [],
+            },
+            "safe", _check_calendar,
         ),
     ]
