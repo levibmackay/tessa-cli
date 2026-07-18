@@ -20,9 +20,14 @@ class WakeDetector:
 
     def _ensure_model(self):
         if self._model is None:
+            import openwakeword
             from openwakeword.model import Model
 
-            self._model = Model(wakeword_models=[self.model_name])
+            # tflite-runtime doesn't exist for Python 3.14/Apple Silicon; the
+            # ONNX runtime does. download_models is a no-op once cached.
+            openwakeword.utils.download_models()
+            self._model = Model(wakeword_models=[self.model_name],
+                                inference_framework="onnx")
         return self._model
 
     def process(self, frame: np.ndarray) -> bool:
