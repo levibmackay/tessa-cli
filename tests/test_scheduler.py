@@ -99,3 +99,32 @@ def test_disable_automations_unloads_and_removes(tmp_path: Path, monkeypatch: py
         runner=lambda cmd, **k: subprocess.CompletedProcess(cmd, 0, "", "")
     )
     assert not plist.exists()
+
+
+def test_enable_listen_writes_runatload_plist(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(scheduler, "LISTEN_PLIST_PATH", tmp_path / "listen.plist")
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    path = scheduler.enable_listen(lydia_path="/usr/local/bin/lydia", runner=fake_run)
+    content = path.read_text()
+    assert "com.lydia.listen" in content and "RunAtLoad" in content and "KeepAlive" in content
+    assert "<string>listen</string>" in content
+    assert calls[0][:2] == ["launchctl", "load"]
+
+
+def test_disable_listen_unloads_and_removes(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    plist = tmp_path / "listen.plist"
+    plist.write_text("x")
+    monkeypatch.setattr(scheduler, "LISTEN_PLIST_PATH", plist)
+    calls = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(cmd)
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    scheduler.disable_listen(runner=fake_run)
+    assert not plist.exists() and calls[0][:2] == ["launchctl", "unload"]

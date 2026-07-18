@@ -127,6 +127,15 @@ context — each one names the files to touch and what "done" looks like.
     against a fake `ModelClient` double, no real Ollama needed.
   - Full design reasoning, API shapes, and the folder structure live in
     `server/README.md` and the plan this was built from.
+- **Voice mode (2026-07-18).** Always-listening voice assistant — say "Hey Jarvis"
+  to trigger the model, ask a question, and hear a spoken reply. `lydia listen`
+  runs the loop in the foreground; `lydia listen enable/disable/status` manage
+  a launchd background agent. Uses `faster_whisper` for speech-to-text (locally,
+  ~150MB model, auto-downloaded), and `piper` for synthesis. Wake word and voices
+  are configurable. Logs to `~/.lydia/listen.log` when running in the background.
+  **Stretch goals:** support custom wake models (current default is Whisper's
+  built-in voice-activity detection), `piper` voice selection UI, follow-up
+  windows (stay listening after a reply without re-saying the wake word).
 
 **Model gotcha found while shipping M2:** not every model that emits
 reasonable-looking tool-call JSON actually wires it into Ollama's
@@ -147,11 +156,10 @@ bottleneck as of M3. M2 removes that ceiling for larger repos.
 ### M7 — Plugins (stretch)
 
 Lowest priority; only worth doing once the server is proven out in daily
-use. Original idea from project scoping: VS Code extension, browser
-automation, voice mode, web search, doc lookup, CI/CD integration. No
-design work has started — if you pick this up, start by defining what a
-"plugin" actually extends (a new tool? a new slash command? both?) before
-writing code.
+use. Original ideas from project scoping: VS Code extension, browser
+automation, web search, doc lookup, CI/CD integration. No design work has
+started — if you pick this up, start by defining what a "plugin" actually
+extends (a new tool? a new slash command? both?) before writing code.
 
 ### Deferred server work
 

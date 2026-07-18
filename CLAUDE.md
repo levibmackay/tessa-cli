@@ -85,8 +85,9 @@ lydia ask "read some_file.py and summarize it" --yes
 Layering, outer to inner — each layer only depends on the ones below it:
 
 ```
-cli/      Typer commands + Rich rendering + prompt_toolkit REPL   (depends on: agent, llm, config, context, automations)
+cli/      Typer commands + Rich rendering + prompt_toolkit REPL   (depends on: agent, llm, config, context, automations, voice)
 agent/    orchestration: system prompt, tool registry, the loop   (depends on: llm, tools, config)
+voice/    speech input/output: mic capture, Whisper STT, Piper TTS, wake-word detection (depends on: agent, llm, config)
 tools/    pure functions that touch the filesystem/shell/git      (depends on: nothing else in lydia)
 llm/      ModelClient protocol + OllamaClient + RemoteClient       (depends on: nothing else in lydia)
 context/  project scanner + semantic index (chunk/embed/search)   (depends on: llm (embeddings), database)
@@ -117,6 +118,15 @@ never `cli/` — this keeps it usable from the server (future) and keeps CLI
 concerns separate from automation concerns. `store.py` holds the single
 `AUTOMATIONS_DIR` constant (`~/.lydia/automations/`), which tests patch for
 hermetic storage without filesystem side effects.
+
+`voice/` is the always-listening voice assistant — `run_loop` orchestrates the
+lifecycle (wake detection, transcription, model inference, speech synthesis) and
+is invoked from `cli/main.py::listen_run`. It uses `faster_whisper` for
+speech-to-text and `piper` for synthesis, both running locally. Tests never
+open the microphone or load models (test audio frames and mocked model clients
+instead); the CLI tests verify wiring only. The launchd plist generation for
+always-on listening lives in `cli/scheduler.py`, mirroring the automations and
+briefing heartbeat patterns.
 
 `tools/` must stay UI- and agent-agnostic: every function takes a project
 root and plain arguments and returns plain data or raises `ToolError`. It

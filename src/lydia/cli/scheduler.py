@@ -165,3 +165,62 @@ def disable_automations(runner: Runner = subprocess.run) -> None:
 
 def automations_enabled() -> bool:
     return AUTOMATIONS_PLIST_PATH.is_file()
+
+
+LISTEN_LABEL = "com.lydia.listen"
+LISTEN_PLIST_PATH = Path.home() / "Library" / "LaunchAgents" / f"{LISTEN_LABEL}.plist"
+LISTEN_LOG_PATH = Path.home() / ".lydia" / "listen.log"
+
+
+def _keepalive_plist_contents(lydia_path: str) -> str:
+    return f"""<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+\t<key>Label</key>
+\t<string>{LISTEN_LABEL}</string>
+\t<key>ProgramArguments</key>
+\t<array>
+\t\t<string>{lydia_path}</string>
+\t\t<string>listen</string>
+\t</array>
+\t<key>RunAtLoad</key>
+\t<true/>
+\t<key>KeepAlive</key>
+\t<true/>
+\t<key>StandardOutPath</key>
+\t<string>{LISTEN_LOG_PATH}</string>
+\t<key>StandardErrorPath</key>
+\t<string>{LISTEN_LOG_PATH}</string>
+</dict>
+</plist>
+"""
+
+
+def enable_listen(lydia_path: str | None = None, runner: Runner = subprocess.run) -> Path:
+    """Write and load the voice listening plist. Returns its path."""
+    resolved_path = lydia_path or _find_lydia_executable()
+    LISTEN_PLIST_PATH.parent.mkdir(parents=True, exist_ok=True)
+    LISTEN_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    LISTEN_PLIST_PATH.write_text(_keepalive_plist_contents(resolved_path), encoding="utf-8")
+    result = runner(
+        ["launchctl", "load", str(LISTEN_PLIST_PATH)],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        raise ScheduleError(f"launchctl load failed: {(result.stderr or result.stdout).strip()}")
+    return LISTEN_PLIST_PATH
+
+
+def disable_listen(runner: Runner = subprocess.run) -> None:
+    if not LISTEN_PLIST_PATH.is_file():
+        return
+    runner(
+        ["launchctl", "unload", str(LISTEN_PLIST_PATH)], capture_output=True, text=True
+    )
+    LISTEN_PLIST_PATH.unlink()
+
+
+def listen_enabled() -> bool:
+    return LISTEN_PLIST_PATH.is_file()

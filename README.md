@@ -358,6 +358,29 @@ convince the model to suppress or mislabel an alert. Critical alerts should
 use `when: always` instead; for everything else, `if_important` is a useful
 convenience filter that doesn't block important information.
 
+## Voice mode
+
+An always-listening voice assistant — say "Hey Jarvis" to trigger the model,
+ask a question, and hear a spoken reply. No transcription transcription cloud service;
+Whisper runs locally via `faster_whisper`, and speech synthesis uses `piper`.
+
+```bash
+lydia listen                 # start listening in the foreground (Ctrl-C stops)
+lydia listen enable          # start at login (launchd) and keep running in the background
+lydia listen disable         # stop the background listener
+lydia listen status          # check if background listening is enabled
+```
+
+**Setup:** The first time you run `lydia listen`, macOS will prompt for
+microphone permission (grant it), and the Whisper model (~150MB) will download
+automatically. Wake word is configurable in `.lydia/config.json`; the default is
+`"Hey Jarvis"` (use underscores for multi-word phrases, e.g. `"Hey_Lydia"`).
+
+`lydia listen enable` runs the assistant as a launchd agent, so it survives
+logout/login and crash restarts. Logs go to `~/.lydia/listen.log`. Note that
+always-listening has a non-trivial battery cost on laptops; disable it when you
+don't need it with `lydia listen disable`.
+
 ## Memory
 
 Lydia keeps two different kinds of history, deliberately separate:

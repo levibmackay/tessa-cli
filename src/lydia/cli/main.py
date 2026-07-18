@@ -71,6 +71,11 @@ automations_app = typer.Typer(help="Create and manage plain-English automations.
 app.add_typer(automations_app, name="automations")
 automations_schedule_app = typer.Typer(help="Manage the automations heartbeat (macOS launchd).")
 automations_app.add_typer(automations_schedule_app, name="schedule")
+listen_app = typer.Typer(
+    invoke_without_command=True,
+    help="Always-listening voice assistant (\"Hey Jarvis\").",
+)
+app.add_typer(listen_app, name="listen")
 
 
 def _memory_root() -> Path:
@@ -705,6 +710,66 @@ def automations_schedule_disable() -> None:
     from lydia.cli import scheduler
     scheduler.disable_automations()
     ui.print_info("Heartbeat disabled.")
+
+
+@listen_app.callback()
+def listen_run(ctx: typer.Context) -> None:
+    """With no subcommand: run the voice loop in the foreground (Ctrl-C stops)."""
+    if ctx.invoked_subcommand is not None:
+        return
+    from lydia.cli.chat import resolve_model
+    from lydia.voice import assistant, audio, tts
+    from lydia.voice.stt import Transcriber
+    from lydia.voice.wake import WakeDetector
+
+    config = load_config()
+    with build_client(config) as client:
+        if not client.is_alive():
+            ui.print_error(f"Cannot reach {config.server_url or config.ollama_host}.")
+            raise typer.Exit(1)
+        model = resolve_model(client, config)
+        ui.print_info(f'Listening for "{config.voice_wake_word.replace("_", " ")}" — Ctrl-C to stop.')
+        try:
+            assistant.run_loop(
+                config, client, model,
+                frames=audio.mic_frames(),
+                wake=WakeDetector(config.voice_wake_word),
+                transcriber=Transcriber(config.voice_stt_model),
+                speak_fn=lambda text: tts.speak(text, voice=config.voice_tts_voice),
+                chime_fn=assistant.play_chime,
+            )
+        except KeyboardInterrupt:
+            ui.print_info("Stopped listening.")
+
+
+@listen_app.command("enable")
+def listen_enable() -> None:
+    """Start at login and keep running (launchd)."""
+    from lydia.cli import scheduler
+
+    try:
+        path = scheduler.enable_listen()
+    except scheduler.ScheduleError as exc:
+        ui.print_error(str(exc))
+        raise typer.Exit(1)
+    ui.print_info(f"Voice assistant enabled at login ({path}).")
+
+
+@listen_app.command("disable")
+def listen_disable() -> None:
+    """Stop the always-on voice assistant."""
+    from lydia.cli import scheduler
+
+    scheduler.disable_listen()
+    ui.print_info("Voice assistant disabled.")
+
+
+@listen_app.command("status")
+def listen_status() -> None:
+    from lydia.cli import scheduler
+
+    state = "enabled at login" if scheduler.listen_enabled() else "not enabled"
+    ui.print_info(f"Voice assistant: {state}.")
 
 
 def main() -> None:
