@@ -419,6 +419,8 @@ lydia-cli/
 │   │                 (local daemon) and RemoteClient (a Lydia Server)
 │   ├── context/     repository scanner + semantic search index
 │   ├── database/    SQLite storage for the semantic index
+│   ├── automations/ automation recipes: parser, store, launchd-driven runner
+│   ├── voice/       always-listening assistant: wake word, STT, TTS, audio I/O
 │   └── config/      layered JSON settings + OS-keychain-backed secrets
 │
 └── server/         optional: FastAPI inference proxy for a remote/GPU
@@ -441,7 +443,7 @@ useful for a human too.
 ## Development
 
 ```bash
-.venv/bin/pytest                                    # CLI suite (270 tests, no Ollama required)
+.venv/bin/pytest                                    # CLI suite (367 tests, no Ollama required)
 .venv/bin/pytest tests/test_agent_loop.py            # one file
 .venv/bin/pytest tests/test_agent_loop.py::test_tool_call_then_final_answer  # one test
 
@@ -470,4 +472,4 @@ doesn't block but doesn't need yet either.
 
 MIT — see [`LICENSE`](LICENSE).
 
-_Last updated: 2026-07-16_
+_Last updated: 2026-07-19_
