@@ -27,6 +27,24 @@ def test_hard_cap_max_seconds():
     assert len(out) == 5 * audio.FRAME_SAMPLES  # 0.4 / 0.08
 
 
+def test_pre_speech_pause_still_captures_speech():
+    # 1.5s of silence before the user starts talking must not end the capture:
+    # silence only counts *after* speech has begun.
+    read = _frames([0] * 19 + [3000] * 10 + [0] * 100)
+    out = audio.record_until_silence(read, silence_after=0.16, frame_seconds=0.08)
+    assert int(np.abs(out).max()) == 3000
+
+
+def test_no_speech_at_all_returns_empty():
+    # If the user never says anything, give up after `speech_wait` and return
+    # empty audio so the caller can miss-chime without invoking Whisper.
+    read = _frames([0] * 200)
+    out = audio.record_until_silence(
+        read, silence_after=0.16, frame_seconds=0.08, speech_wait=1.0
+    )
+    assert out.size == 0
+
+
 def test_config_voice_defaults():
     cfg = LydiaConfig()
     assert cfg.voice_wake_word == "hey_jarvis"

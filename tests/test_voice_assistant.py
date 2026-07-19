@@ -90,6 +90,68 @@ def test_voice_registry_includes_new_tools():
     assert "write_file" not in names and "run_command" not in names
 
 
+class AlwaysWake:
+    def process(self, frame):
+        return True
+
+
+def _loop(monkeypatch, client, transcriber, events=None, max_turns=1, now_fn=None, wake=None):
+    monkeypatch.setattr(assistant.audio, "record_until_silence", lambda rf, **kw: FRAME)
+    seen = []
+    real = assistant.run_agent_turn
+
+    def spy(**kw):
+        seen.append([(m.role, m.content) for m in kw["messages"]])
+        return real(**kw)
+
+    monkeypatch.setattr(assistant, "run_agent_turn", spy)
+    events = events if events is not None else []
+    kwargs = {"now_fn": now_fn} if now_fn else {}
+    assistant.run_loop(
+        LydiaConfig(), client, "m",
+        frames=itertools.repeat(SILENT), wake=wake or AlwaysWake(),
+        transcriber=transcriber,
+        speak_fn=lambda t: events.append("speak"),
+        chime_fn=lambda k: events.append(k),
+        flush_fn=lambda: events.append("flush"),
+        max_turns=max_turns, **kwargs,
+    )
+    return seen, events
+
+
+class SeqTranscriber:
+    def __init__(self, texts):
+        self.texts = iter(texts)
+
+    def transcribe(self, pcm):
+        return next(self.texts)
+
+
+def test_flush_after_wake_chime_and_after_speech(monkeypatch):
+    _, events = _loop(monkeypatch, FakeClient(["Hi."]), FakeTranscriber("hello"))
+    assert events == ["wake", "flush", "speak", "flush"]
+
+
+def test_flush_after_miss_chime(monkeypatch):
+    _, events = _loop(monkeypatch, FakeClient([]), FakeTranscriber("  "))
+    assert events == ["wake", "flush", "miss", "flush"]
+
+
+def test_history_carries_between_turns(monkeypatch):
+    seen, _ = _loop(monkeypatch, FakeClient(["Sunny.", "Rainy."]),
+                    SeqTranscriber(["weather today", "and tomorrow"]), max_turns=2)
+    assert seen[1] == [("user", "weather today"), ("assistant", "Sunny."),
+                       ("user", "and tomorrow")]
+
+
+def test_history_resets_after_long_gap(monkeypatch):
+    clock = iter([0.0, 1000.0])  # second turn 1000s later > 300s ttl
+    seen, _ = _loop(monkeypatch, FakeClient(["Sunny.", "Rainy."]),
+                    SeqTranscriber(["weather today", "and tomorrow"]),
+                    max_turns=2, now_fn=lambda: next(clock))
+    assert seen[1] == [("user", "and tomorrow")]
+
+
 @pytest.fixture
 def no_real_push(monkeypatch):
     """Prevent actual push notification setup."""

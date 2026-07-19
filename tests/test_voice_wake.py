@@ -1,4 +1,13 @@
 """tests/test_voice_wake.py"""
+from lydia.voice.wake import wake_label
+
+
+def test_wake_label_pretrained_name():
+    assert wake_label("hey_jarvis") == "hey jarvis"
+
+
+def test_wake_label_custom_model_path():
+    assert wake_label("/Users/x/.lydia/hey_lydia.onnx") == "hey lydia"
 import numpy as np
 
 from lydia.voice.wake import WakeDetector

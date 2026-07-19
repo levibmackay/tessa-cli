@@ -7,6 +7,13 @@ from pathlib import Path
 import numpy as np
 
 
+def wake_label(name: str) -> str:
+    """Human-readable wake phrase ("/…/hey_lydia.onnx" → "hey lydia")."""
+    path = Path(name)
+    stem = path.stem if path.suffix == ".onnx" else name
+    return stem.replace("_", " ")
+
+
 class WakeDetector:
     """True exactly once per wake-word activation.
 

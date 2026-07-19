@@ -717,10 +717,21 @@ def listen_run(ctx: typer.Context) -> None:
     """With no subcommand: run the voice loop in the foreground (Ctrl-C stops)."""
     if ctx.invoked_subcommand is not None:
         return
+    import logging
+    from pathlib import Path
+
     from lydia.cli.chat import resolve_model
     from lydia.voice import assistant, audio, tts
     from lydia.voice.stt import Transcriber
-    from lydia.voice.wake import WakeDetector
+    from lydia.voice.wake import WakeDetector, wake_label
+
+    log_path = Path.home() / ".lydia" / "listen.log"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    handler = logging.FileHandler(log_path)
+    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
+    voice_logger = logging.getLogger("lydia.voice")
+    voice_logger.setLevel(logging.INFO)
+    voice_logger.addHandler(handler)
 
     config = load_config()
     with build_client(config) as client:
@@ -728,15 +739,17 @@ def listen_run(ctx: typer.Context) -> None:
             ui.print_error(f"Cannot reach {config.server_url or config.ollama_host}.")
             raise typer.Exit(1)
         model = config.voice_model or resolve_model(client, config)
-        ui.print_info(f'Listening for "{config.voice_wake_word.replace("_", " ")}" — Ctrl-C to stop.')
+        mic = audio.Microphone()
+        ui.print_info(f'Listening for "{wake_label(config.voice_wake_word)}" — Ctrl-C to stop.')
         try:
             assistant.run_loop(
                 config, client, model,
-                frames=audio.mic_frames(),
+                frames=mic.frames(),
                 wake=WakeDetector(config.voice_wake_word),
                 transcriber=Transcriber(config.voice_stt_model),
                 speak_fn=lambda text: tts.speak(text, voice=config.voice_tts_voice),
                 chime_fn=assistant.play_chime,
+                flush_fn=mic.flush,
             )
         except KeyboardInterrupt:
             ui.print_info("Stopped listening.")
