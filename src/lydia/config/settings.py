@@ -134,13 +134,25 @@ def save_config_value(key: str, value: Any, path: Path) -> None:
 
 
 def coerce_value(key: str, raw: str) -> Any:
-    """Convert a CLI string like '0.3' into the right type for *key*."""
+    """Convert a CLI string into the appropriate type for the given config key."""
     for f in fields(LydiaConfig):
         if f.name != key:
             continue
+
         if f.type in ("float", float):
             return float(raw)
+
         if f.type in ("int", int):
             return int(raw)
+
+        if f.type in ("bool", bool):
+            value = raw.strip().lower()
+            if value in ("true", "1", "yes", "on"):
+                return True
+            if value in ("false", "0", "no", "off"):
+                return False
+            raise ValueError(f"Invalid boolean value: {raw!r}")
+
         return raw
+
     return raw
